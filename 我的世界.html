@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的世界 (Web Minecraft) - 修复版</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Microsoft YaHei', sans-serif;
+            background-color: #87CEEB;
+            user-select: none;
+        }
+
+        #ui-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        #status-bar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            text-shadow: 2px 2px 0 #000;
+            font-size: 16px;
+            line-height: 1.5;
+            pointer-events: none;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 20px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            opacity: 0.8;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 0 2px black;
+        }
+        #crosshair::before { top: 9px; left: 0; width: 20px; height: 2px; }
+        #crosshair::after { top: 0; left: 9px; width: 2px; height: 20px; }
+
+        #toolbar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px;
+            border-radius: 5px;
+            pointer-events: auto;
+        }
+
+        .slot {
+            width: 40px;
+            height: 40px;
+            margin: 0 5px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 0 #000;
+            transition: transform 0.1s;
+        }
+
+        .slot.active {
+            border-color: white;
+            transform: scale(1.1);
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+
+        #menu-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            pointer-events: auto;
+            z-index: 100;
+        }
+
+        h1 {
+            font-size: 4rem;
+            margin-bottom: 10px;
+            text-shadow: 4px 4px 0 #3f3f3f;
+            color: #fff;
+        }
+
+        .menu-box {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 600px;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .controls-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            text-align: left;
+            margin: 20px 0;
+            line-height: 1.6;
+            font-size: 0.95rem;
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 5px;
+        }
+        
+        .key-badge {
+            background: #fff;
+            color: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-right: 5px;
+            font-size: 0.8rem;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-family: inherit;
+            transition: background 0.2s;
+            box-shadow: 0 4px 0 #2E7D32;
+        }
+
+        button:hover { background: #66BB6A; }
+        button:active { transform: translateY(2px); box-shadow: 0 2px 0 #2E7D32; }
+        button.secondary { background: #2196F3; box-shadow: 0 4px 0 #1565C0; }
+        button.secondary:hover { background: #42A5F5; }
+        button.secondary:active { box-shadow: 0 2px 0 #1565C0; }
+
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui-container">
+        <div id="status-bar">
+            模式: <span id="mode-display">生存 (重力)</span><br>
+            视角: <span id="view-display">第一人称</span><br>
+            方块数: <span id="block-count">0</span>
+        </div>
+        <div id="crosshair"></div>
+        <div id="toolbar"></div>
+    </div>
+
+    <div id="menu-overlay">
+        <h1>MINECRAFT WEB</h1>
+        <div class="menu-box">
+            <h3>操作指南</h3>
+            <div class="controls-info">
+                <div>
+                    <div><span class="key-badge">W A S D</span> 水平移动</div>
+                    <div><span class="key-badge">SPACE</span> 跳跃 / 上升</div>
+                    <div><span class="key-badge">SHIFT</span> 下降 (飞行模式)</div>
+                    <div><span class="key-badge">鼠标</span> 旋转视角</div>
+                </div>
+                <div>
+                    <div><span class="key-badge">左键</span> 挖掘</div>
+                    <div><span class="key-badge">右键</span> 放置</div>
+                    <div><span class="key-badge">F</span> 切换 飞行/生存</div>
+                    <div><span class="key-badge">C</span> 切换 第一/第三人称</div>
+                </div>
+            </div>
+            
+            <p>选择地图大小：</p>
+            <div class="btn-group">
+                <button class="secondary" onclick="startGame(30)">小 (30x30)</button>
+                <button class="secondary" onclick="startGame(60)">中 (60x60)</button>
+                <button onclick="startGame(100)">大 (100x100)</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let camera, scene, renderer;
+        let controls;
+        let raycaster;
+        let playerGroup; 
+        let playerHead, playerBody, playerLeftLeg, playerRightLeg; 
+        
+        const objects = []; 
+        const voxelMap = new Map(); 
+        
+        const cubeSize = 20; 
+        let worldSize = 50;
+        
+        let isGameActive = false;
+        let isFlying = false; 
+        let isThirdPerson = false; // 默认第一人称
+
+        const playerHeightOffset = 8; 
+        const playerColliderHeight = 32; 
+        const playerColliderWidth = 10; 
+
+        let moveForward = false;
+        let moveBackward = false;
+        let moveLeft = false;
+        let moveRight = false;
+        let moveUp = false;
+        let moveDown = false;
+        let canJump = false;
+        
+        let prevTime = performance.now();
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        
+        const speedWalk = 400.0;
+        const speedFly = 800.0;
+        const jumpForce = 300.0; 
+        const gravity = 900.0;
+        
+        const materials = {};
+        let currentBlockType = 'grass';
+        const blockTypes = ['grass', 'dirt', 'stone', 'wood', 'leaves', 'brick'];
+
+        function createTexture(color, noiseAmount = 10) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = color;
+            ctx.fillRect(0, 0, 64, 64);
+            for (let i = 0; i < 400; i++) {
+                const x = Math.random() * 64;
+                const y = Math.random() * 64;
+                ctx.fillStyle = `rgba(0,0,0,${Math.random() * (noiseAmount/100)})`;
+                ctx.fillRect(x, y, 2, 2);
+                ctx.fillStyle = `rgba(255,255,255,${Math.random() * (noiseAmount/100)})`;
+                ctx.fillRect(x+2, y+2, 2, 2);
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.magFilter = THREE.NearestFilter;
+            tex.minFilter = THREE.NearestFilter;
+            return tex;
+        }
+
+        function initMaterials() {
+            materials['grass'] = new THREE.MeshLambertMaterial({ map: createTexture('#5C9E46') });
+            materials['dirt'] = new THREE.MeshLambertMaterial({ map: createTexture('#5D4037') });
+            materials['stone'] = new THREE.MeshLambertMaterial({ map: createTexture('#757575') });
+            materials['wood'] = new THREE.MeshLambertMaterial({ map: createTexture('#4E342E', 15) });
+            materials['leaves'] = new THREE.MeshLambertMaterial({ map: createTexture('#2E7D32', 30) });
+            materials['brick'] = new THREE.MeshLambertMaterial({ map: createTexture('#8D6E63') });
+            return {
+                'grass': '#5C9E46', 'dirt': '#5D4037', 'stone': '#757575',
+                'wood': '#4E342E', 'leaves': '#2E7D32', 'brick': '#8D6E63'
+            };
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87CEEB);
+            scene.fog = new THREE.Fog(0x87CEEB, 10, 800);
+
+            // 玩家模型
+            playerGroup = new THREE.Group();
+            
+            const headGeo = new THREE.BoxGeometry(16, 16, 16);
+            const headMat = new THREE.MeshLambertMaterial({ color: 0x8D6E63 });
+            playerHead = new THREE.Mesh(headGeo, headMat);
+            playerHead.position.y = 8; 
+
+            const bodyGeo = new THREE.BoxGeometry(16, 24, 8);
+            const bodyMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+            playerBody = new THREE.Mesh(bodyGeo, bodyMat);
+            playerBody.position.y = -12; 
+
+            const legGeo = new THREE.BoxGeometry(8, 24, 8);
+            const legMat = new THREE.MeshLambertMaterial({ color: 0x3F51B5 }); 
+            playerLeftLeg = new THREE.Mesh(legGeo, legMat);
+            playerLeftLeg.position.set(-4, -36, 0); 
+            playerRightLeg = new THREE.Mesh(legGeo, legMat);
+            playerRightLeg.position.set(4, -36, 0); 
+
+            playerGroup.add(playerHead, playerBody, playerLeftLeg, playerRightLeg);
+            playerGroup.position.y = 100; 
+            playerGroup.castShadow = true;
+            playerGroup.receiveShadow = true;
+            scene.add(playerGroup);
+
+            // 相机设置
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+            playerHead.add(camera); // 相机绑定到头部
+            
+            // 初始视角更新
+            updateCameraMode();
+
+            const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444, 0.6);
+            hemiLight.position.set(0, 200, 0);
+            scene.add(hemiLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            dirLight.position.set(100, 200, 100);
+            dirLight.castShadow = true;
+            dirLight.shadow.camera.right = 100;
+            dirLight.shadow.camera.left = -100;
+            dirLight.shadow.camera.top = 100;
+            dirLight.shadow.camera.bottom = -100;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            scene.add(dirLight);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+
+            raycaster = new THREE.Raycaster();
+            setupControls();
+
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+            document.addEventListener('mousedown', onMouseDown);
+
+            const colors = initMaterials();
+            initToolbar(colors);
+            updateStatusUI();
+        }
+
+        function getKey(x, y, z) {
+            return `${Math.round(x)},${Math.round(y)},${Math.round(z)}`;
+        }
+
+        function generateWorld(size) {
+            worldSize = size;
+            objects.forEach(obj => scene.remove(obj));
+            objects.length = 0;
+            voxelMap.clear();
+
+            const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+            
+            for (let x = -worldSize/2; x < worldSize/2; x++) {
+                for (let z = -worldSize/2; z < worldSize/2; z++) {
+                    const xoff = x * 0.1;
+                    const zoff = z * 0.1;
+                    let h = Math.sin(xoff) * Math.cos(zoff) * 2 + Math.sin(xoff * 0.5 + zoff * 0.5) * 1;
+                    let yHeight = Math.floor(Math.abs(h)); 
+
+                    for (let y = 0; y <= yHeight; y++) {
+                        let type = 'stone';
+                        if (y === yHeight) type = 'grass';
+                        else if (y > yHeight - 2) type = 'dirt';
+
+                        if (y === yHeight && type === 'grass' && Math.random() > 0.98 && Math.abs(x) < size/2-2) {
+                            createTree(x * cubeSize, (y + 1) * cubeSize, z * cubeSize);
+                        }
+                        addVoxel(x * cubeSize, y * cubeSize, z * cubeSize, type, geometry);
+                    }
+                    addVoxel(x * cubeSize, -cubeSize, z * cubeSize, 'stone', geometry);
+                }
+            }
+            document.getElementById('block-count').innerText = objects.length;
+        }
+
+        function addVoxel(x, y, z, type, geo = null) {
+            const gx = Math.round(x / cubeSize) * cubeSize;
+            const gy = Math.round(y / cubeSize) * cubeSize;
+            const gz = Math.round(z / cubeSize) * cubeSize;
+            const key = getKey(gx, gy, gz);
+
+            if (voxelMap.has(key)) return;
+
+            const geometry = geo || new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+            const material = materials[type];
+            const voxel = new THREE.Mesh(geometry, material);
+            voxel.position.set(gx, gy, gz);
+            voxel.castShadow = true;
+            voxel.receiveShadow = true;
+            voxel.matrixAutoUpdate = false;
+            voxel.updateMatrix();
+
+            scene.add(voxel);
+            objects.push(voxel);
+            voxelMap.set(key, voxel);
+            return voxel;
+        }
+
+        function removeVoxel(voxel) {
+            scene.remove(voxel);
+            const index = objects.indexOf(voxel);
+            if (index > -1) objects.splice(index, 1);
+            const key = getKey(voxel.position.x, voxel.position.y, voxel.position.z);
+            voxelMap.delete(key);
+            document.getElementById('block-count').innerText = objects.length;
+        }
+
+        function createTree(x, y, z) {
+            for(let i=0; i<4; i++) addVoxel(x, y + (i*cubeSize), z, 'wood');
+            const leafStart = y + (3*cubeSize);
+            for(let lx = -1; lx <= 1; lx++) {
+                for(let ly = 0; ly <= 1; ly++) {
+                    for(let lz = -1; lz <= 1; lz++) {
+                        if (lx===0 && lz===0 && ly===0) continue;
+                        addVoxel(x + lx*cubeSize, leafStart + ly*cubeSize, z + lz*cubeSize, 'leaves');
+                    }
+                }
+            }
+            addVoxel(x, leafStart + 2*cubeSize, z, 'leaves');
+        }
+
+        function setupControls() {
+            controls = {
+                isLocked: false,
+                getObject: function() { return playerGroup; },
+                lock: function() { document.body.requestPointerLock(); },
+                unlock: function() { document.exitPointerLock(); }
+            };
+
+            document.addEventListener('mousemove', (event) => {
+                if (!controls.isLocked) return;
+                playerGroup.rotation.y -= event.movementX * 0.002;
+                camera.rotation.x -= event.movementY * 0.002;
+                camera.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, camera.rotation.x));
+            });
+
+            document.addEventListener('pointerlockchange', () => {
+                controls.isLocked = (document.pointerLockElement === document.body);
+                document.getElementById('menu-overlay').style.display = controls.isLocked ? 'none' : 'flex';
+                isGameActive = controls.isLocked;
+            });
+        }
+
+        function updateCameraMode() {
+            if (isThirdPerson) {
+                // TPP
+                camera.position.set(0, 20, 80); // 相机拉后
+                playerHead.visible = true;
+                playerBody.visible = true;
+                playerLeftLeg.visible = true;
+                playerRightLeg.visible = true;
+            } else {
+                // FPP
+                camera.position.set(0, playerHeightOffset, 0); // 相机在眼部
+                playerHead.visible = false; // 隐藏头部防止挡视线
+                playerBody.visible = false; // 隐藏身体
+                playerLeftLeg.visible = true; // 保留腿部（可选，低头能看见脚）
+                playerRightLeg.visible = true;
+            }
+            updateStatusUI();
+        }
+
+        function updateStatusUI() {
+            document.getElementById('mode-display').innerText = isFlying ? "创造 (飞行)" : "生存 (重力)";
+            document.getElementById('mode-display').style.color = isFlying ? "#4CAF50" : "#FF5252";
+            document.getElementById('view-display').innerText = isThirdPerson ? "第三人称" : "第一人称";
+        }
+
+        function checkCollision(targetPos) {
+            const halfWidth = playerColliderWidth / 2;
+            const halfHeight = playerColliderHeight / 2;
+            const pointsToTest = [
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y - halfHeight, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y - halfHeight, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y - halfHeight, targetPos.z + halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y - halfHeight, targetPos.z + halfWidth),
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y, targetPos.z + halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y, targetPos.z + halfWidth),
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y + halfHeight, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y + halfHeight, targetPos.z - halfWidth),
+                new THREE.Vector3(targetPos.x - halfWidth, targetPos.y + halfHeight, targetPos.z + halfWidth),
+                new THREE.Vector3(targetPos.x + halfWidth, targetPos.y + halfHeight, targetPos.z + halfWidth),
+            ];
+
+            for (let p of pointsToTest) {
+                const gx = Math.round(p.x / cubeSize) * cubeSize;
+                const gy = Math.round(p.y / cubeSize) * cubeSize;
+                const gz = Math.round(p.z / cubeSize) * cubeSize;
+                
+                const key = getKey(gx, gy, gz);
+                if (voxelMap.has(key)) {
+                    const voxel = voxelMap.get(key);
+                    const vPos = voxel.position;
+                    // 严格判定，避免边缘误触
+                    if (Math.abs(p.x - vPos.x) < cubeSize / 2 &&
+                        Math.abs(p.y - vPos.y) < cubeSize / 2 &&
+                        Math.abs(p.z - vPos.z) < cubeSize / 2) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls.isLocked) {
+                const time = performance.now();
+                let delta = Math.min((time - prevTime) / 1000, 0.1); 
+
+                const currentSpeed = isFlying ? speedFly : speedWalk;
+
+                // 修正前后反向：W = 前进 (-Z), S = 后退 (+Z)
+                direction.z = Number(moveBackward) - Number(moveForward); 
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize(); 
+
+                const moveVector = new THREE.Vector3(direction.x * currentSpeed * delta, 0, direction.z * currentSpeed * delta);
+                moveVector.applyEuler(new THREE.Euler(0, playerGroup.rotation.y, 0));
+
+                if (isFlying) {
+                    playerGroup.position.add(moveVector);
+                    if (moveUp) playerGroup.position.y += currentSpeed * delta;
+                    if (moveDown) playerGroup.position.y -= currentSpeed * delta;
+                    velocity.y = 0; 
+                } 
+                else {
+                    // X 轴移动
+                    const oldX = playerGroup.position.x;
+                    playerGroup.position.x += moveVector.x;
+                    if (checkCollision(playerGroup.position)) playerGroup.position.x = oldX;
+
+                    // Z 轴移动
+                    const oldZ = playerGroup.position.z;
+                    playerGroup.position.z += moveVector.z;
+                    if (checkCollision(playerGroup.position)) playerGroup.position.z = oldZ;
+
+                    // Y 轴 (重力)
+                    velocity.y -= gravity * delta;
+                    
+                    // 预测下一步垂直位置
+                    const oldY = playerGroup.position.y;
+                    const nextY = oldY + velocity.y * delta;
+                    playerGroup.position.y = nextY;
+
+                    if (checkCollision(playerGroup.position)) {
+                        playerGroup.position.y = oldY; // 碰撞了，回退
+                        
+                        if (velocity.y < 0) { 
+                            // 落地逻辑
+                            canJump = true;
+                            velocity.y = 0;
+                            
+                            // 吸附地面：找到脚下最近的方块顶部，对齐位置
+                            // 避免在两个帧之间反复震荡
+                            const footY = playerGroup.position.y - playerColliderHeight/2;
+                            // 简单的对齐到网格
+                            // 假设方块顶部是 y + cubeSize/2
+                            // 我们可以通过取整找到最近的网格层
+                            const gridY = Math.round((footY - cubeSize/2) / cubeSize) * cubeSize;
+                            
+                            // 如果我们确实很接近这个网格上方，就吸附上去
+                            // (gridY + cubeSize/2) 是方块顶面Y坐标
+                            // 加上 playerColliderHeight/2 是玩家中心应该在的Y坐标
+                            const targetY = gridY + cubeSize/2 + playerColliderHeight/2;
+                            
+                            // 只有当误差很小时才吸附，避免瞬间移动太远
+                            if (Math.abs(playerGroup.position.y - targetY) < cubeSize) {
+                                playerGroup.position.y = targetY + 0.001; // 加一点点epsilon防止下一帧判定为内部
+                            }
+                        } else if (velocity.y > 0) {
+                            // 顶头
+                            velocity.y = 0;
+                        }
+                    }
+                }
+
+                if (playerGroup.position.y < -150) {
+                    playerGroup.position.set(0, 150, 0);
+                    velocity.y = 0;
+                }
+
+                prevTime = time;
+            }
+            renderer.render(scene, camera);
+        }
+
+        function onKeyDown(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'Space': 
+                    if (isFlying) moveUp = true;
+                    else if (canJump) {
+                        velocity.y = jumpForce;
+                        canJump = false;
+                        // 稍微抬高一点点防止立即判定为碰撞
+                        playerGroup.position.y += 0.5; 
+                    }
+                    break;
+                case 'ShiftLeft': if (isFlying) moveDown = true; break;
+                case 'KeyF': 
+                    isFlying = !isFlying; 
+                    velocity.y = 0; 
+                    updateStatusUI();
+                    break;
+                case 'KeyC': // 恢复视角切换
+                    isThirdPerson = !isThirdPerson;
+                    updateCameraMode();
+                    break;
+                case 'Digit1': selectBlock(0); break;
+                case 'Digit2': selectBlock(1); break;
+                case 'Digit3': selectBlock(2); break;
+                case 'Digit4': selectBlock(3); break;
+                case 'Digit5': selectBlock(4); break;
+                case 'Digit6': selectBlock(5); break;
+            }
+        }
+
+        function onKeyUp(e) {
+            switch (e.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyD': moveRight = false; break;
+                case 'Space': moveUp = false; break;
+                case 'ShiftLeft': moveDown = false; break;
+            }
+        }
+
+        function onMouseDown(e) {
+            if (!controls.isLocked) {
+                if (isGameActive) controls.lock();
+                return;
+            }
+
+            const camPos = new THREE.Vector3();
+            const camDir = new THREE.Vector3();
+            // 获取相机世界坐标（因为相机现在可能是子对象）
+            camera.getWorldPosition(camPos);
+            camera.getWorldDirection(camDir);
+
+            raycaster.set(camPos, camDir);
+            const intersects = raycaster.intersectObjects(objects);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                if (hit.distance > 120) return; 
+
+                if (e.button === 0) { 
+                    removeVoxel(hit.object);
+                } else if (e.button === 2) { 
+                    const p = hit.object.position.clone().add(hit.face.normal.multiplyScalar(cubeSize));
+                    
+                    if (!isFlying) {
+                        const dx = Math.abs(playerGroup.position.x - p.x);
+                        const dz = Math.abs(playerGroup.position.z - p.z);
+                        const playerBottom = playerGroup.position.y - 48; 
+                        const playerTop = playerGroup.position.y + 20;
+
+                        if (dx < 15 && dz < 15 && (p.y < playerTop && p.y > playerBottom)) {
+                             return; 
+                        }
+                    }
+                    addVoxel(p.x, p.y, p.z, currentBlockType);
+                }
+            }
+        }
+
+        function initToolbar(colors) {
+            const tb = document.getElementById('toolbar');
+            tb.innerHTML = '';
+            blockTypes.forEach((type, i) => {
+                const slot = document.createElement('div');
+                slot.className = i === 0 ? 'slot active' : 'slot';
+                slot.style.backgroundColor = colors[type];
+                slot.innerText = i + 1;
+                slot.onclick = () => selectBlock(i);
+                tb.appendChild(slot);
+            });
+        }
+
+        function selectBlock(i) {
+            if (i < 0 || i >= blockTypes.length) return;
+            currentBlockType = blockTypes[i];
+            document.querySelectorAll('.slot').forEach((s, idx) => {
+                s.classList.toggle('active', idx === i);
+            });
+        }
+
+        function startGame(size) {
+            generateWorld(size);
+            playerGroup.position.set(0, 150, 0);
+            playerGroup.rotation.set(0, 0, 0);
+            camera.rotation.set(0, 0, 0);
+            velocity.set(0,0,0);
+            controls.lock();
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>

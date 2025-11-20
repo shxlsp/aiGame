@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>森林冰火人 - Fireboy & Watergirl</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            margin: 0;
+            background-color: #202020;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Press Start 2P', cursive;
+            color: white;
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        canvas {
+            background-color: #2c2c2c; /* Temple wall color */
+            display: block;
+            border: 4px solid #5a4a42;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            font-size: 16px;
+            text-shadow: 2px 2px 0 #000;
+        }
+
+        #message-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            z-index: 10;
+            pointer-events: auto;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        h1 {
+            font-size: 40px;
+            color: #ffd700;
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            text-shadow: 4px 4px 0 #b8860b;
+        }
+
+        p {
+            font-size: 14px;
+            line-height: 1.8;
+            color: #ccc;
+            max-width: 600px;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            background: #e67e22;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            font-family: 'Press Start 2P', cursive;
+            cursor: pointer;
+            border-bottom: 4px solid #d35400;
+            transition: transform 0.1s;
+        }
+
+        .btn:active {
+            transform: translateY(4px);
+            border-bottom: none;
+            margin-bottom: 4px;
+        }
+
+        .controls-info {
+            display: flex;
+            gap: 40px;
+            margin-top: 30px;
+        }
+
+        .control-group {
+            text-align: center;
+        }
+        
+        .key {
+            display: inline-block;
+            background: #444;
+            padding: 5px 10px;
+            border-radius: 4px;
+            border-bottom: 2px solid #222;
+            margin: 0 2px;
+            color: #fff;
+        }
+
+        .fb-text { color: #ff4d4d; }
+        .wg-text { color: #4da6ff; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    
+    <div id="ui-layer">
+        <div class="hud">
+            <div id="level-display">LEVEL 1</div>
+            <div id="gem-display">💎 0/0</div>
+        </div>
+    </div>
+
+    <div id="message-overlay">
+        <h1 id="title-text">森林冰火人</h1>
+        <div id="game-intro">
+            <p>
+                合作闯关游戏。<br>
+                <span class="fb-text">火娃 (Fireboy)</span> 只能在岩浆中生存。<br>
+                <span class="wg-text">水娃 (Watergirl)</span> 只能在水中生存。<br>
+                绿泥对所有人都是致命的！<br>
+                收集宝石并到达各自的门。
+            </p>
+            <div class="controls-info">
+                <div class="control-group">
+                    <h3 class="wg-text">水娃</h3>
+                    <div><span class="key">W</span><span class="key">A</span><span class="key">D</span></div>
+                </div>
+                <div class="control-group">
+                    <h3 class="fb-text">火娃</h3>
+                    <div><span class="key">↑</span><span class="key">←</span><span class="key">→</span></div>
+                </div>
+            </div>
+            <br><br>
+            <button class="btn" onclick="startGame()">开始游戏</button>
+        </div>
+        <div id="game-over" class="hidden">
+            <h1 style="color: #ff4d4d;">失败!</h1>
+            <p id="death-reason">小心陷阱！</p>
+            <button class="btn" onclick="restartLevel()">重试</button>
+        </div>
+        <div id="level-complete" class="hidden">
+            <h1 style="color: #4da6ff;">过关!</h1>
+            <p>做得好！准备好迎接下一关了吗？</p>
+            <button class="btn" onclick="nextLevel()">下一关</button>
+        </div>
+        <div id="game-victory" class="hidden">
+            <h1 style="color: #ffd700;">全通关!</h1>
+            <p>你们是完美的搭档！</p>
+            <button class="btn" onclick="resetGame()">回到主菜单</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * Game Engine & Logic
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Game Constants
+const GRAVITY = 0.6;
+const FRICTION = 0.8;
+const JUMP_FORCE = -13; // Increased jump power (was -10) to fix difficulty
+const MOVE_SPEED = 5;
+const TILE_SIZE = 40; // Grid size
+
+// Game State
+let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER, LEVEL_COMPLETE, VICTORY
+let currentLevelIdx = 0;
+let requestFrameId;
+let keys = {};
+
+// Assets (Procedural drawing, no images needed)
+const COLORS = {
+    fire: '#FF4D4D',
+    water: '#4DA6FF',
+    goo: '#00aa00',
+    wall: '#755b46',
+    bg: '#2c2c2c',
+    diamondRed: '#FF0000',
+    diamondBlue: '#00FFFF',
+    doorRed: '#5c1818',
+    doorBlue: '#183b5c',
+    btnActive: '#333',
+    btnInactive: '#777'
+};
+
+// Entities
+class Player {
+    constructor(type, x, y) {
+        this.type = type; // 'fire' or 'water'
+        this.width = 24;
+        this.height = 36;
+        this.x = x;
+        this.y = y;
+        this.vx = 0;
+        this.vy = 0;
+        this.isGrounded = false;
+        this.dead = false;
+        this.atDoor = false;
+        this.color = type === 'fire' ? COLORS.fire : COLORS.water;
+    }
+
+    update(platforms, gates) {
+        if (this.dead || this.atDoor) return;
+
+        // Apply Gravity
+        this.vy += GRAVITY;
+
+        // Apply input
+        if (this.type === 'fire') {
+            if (keys['ArrowLeft']) this.vx -= 1;
+            if (keys['ArrowRight']) this.vx += 1;
+            if (keys['ArrowUp'] && this.isGrounded) {
+                this.vy = JUMP_FORCE;
+                this.isGrounded = false;
+            }
+        } else {
+            if (keys['a'] || keys['A']) this.vx -= 1;
+            if (keys['d'] || keys['D']) this.vx += 1;
+            if ((keys['w'] || keys['W']) && this.isGrounded) {
+                this.vy = JUMP_FORCE;
+                this.isGrounded = false;
+            }
+        }
+
+        // Max speed and Friction
+        this.vx *= FRICTION;
+        // Simple clamp
+        if (this.vx > MOVE_SPEED) this.vx = MOVE_SPEED;
+        if (this.vx < -MOVE_SPEED) this.vx = -MOVE_SPEED;
+
+        // Collision Detection: Horizontal
+        this.x += this.vx;
+        this.checkWallCollision(platforms, gates, 'x');
+
+        // Collision Detection: Vertical
+        this.y += this.vy;
+        this.isGrounded = false; // Assume falling until collision proves otherwise
+        this.checkWallCollision(platforms, gates, 'y');
+
+        // Screen boundaries
+        if (this.x < 0) this.x = 0;
+        if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+        if (this.y > canvas.height) {
+            killPlayer(this.type, "掉进了虚空!");
+        }
+    }
+
+    checkWallCollision(platforms, gates, axis) {
+        // Combine static platforms and active gates for collision
+        const collidables = [...platforms, ...gates.filter(g => !g.isOpen)];
+
+        for (let wall of collidables) {
+            if (this.x < wall.x + wall.w &&
+                this.x + this.width > wall.x &&
+                this.y < wall.y + wall.h &&
+                this.y + this.height > wall.y) {
+                
+                if (axis === 'x') {
+                    if (this.vx > 0) this.x = wall.x - this.width;
+                    if (this.vx < 0) this.x = wall.x + wall.w;
+                    this.vx = 0;
+                } else {
+                    if (this.vy > 0) { // Falling
+                        this.y = wall.y - this.height;
+                        this.isGrounded = true;
+                        this.vy = 0;
+                    } else if (this.vy < 0) { // Jumping up
+                        this.y = wall.y + wall.h;
+                        this.vy = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    draw() {
+        if (this.dead) return;
+        
+        ctx.save();
+        // Glow effect
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+        ctx.fillStyle = this.color;
+        
+        // Draw body
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        
+        // Draw Eyes
+        ctx.fillStyle = "white";
+        ctx.fillRect(this.x + 4, this.y + 8, 6, 6);
+        ctx.fillRect(this.x + 14, this.y + 8, 6, 6);
+        
+        // Draw pupils
+        ctx.fillStyle = "black";
+        let lookDir = this.vx >= 0 ? 2 : -2;
+        ctx.fillRect(this.x + 6 + lookDir, this.y + 10, 2, 2);
+        ctx.fillRect(this.x + 16 + lookDir, this.y + 10, 2, 2);
+
+        ctx.restore();
+    }
+}
+
+class Hazard {
+    constructor(x, y, w, h, type) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.type = type; // 'fire', 'water', 'goo'
+    }
+
+    draw() {
+        ctx.fillStyle = this.type === 'fire' ? COLORS.fire : (this.type === 'water' ? COLORS.water : COLORS.goo);
+        
+        // Draw liquid wave top
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + this.h);
+        ctx.lineTo(this.x, this.y + 5);
+        // Simple zig zag top
+        for(let i = this.x; i < this.x + this.w; i+=10) {
+            ctx.lineTo(i + 5, this.y);
+            ctx.lineTo(i + 10, this.y + 5);
+        }
+        ctx.lineTo(this.x + this.w, this.y + this.h);
+        ctx.fill();
+    }
+
+    checkCollision(player) {
+        if (player.dead) return;
+        // Simple AABB with a bit of forgiveness on top
+        let forgiveness = 10; 
+        if (player.x < this.x + this.w - 5 &&
+            player.x + player.width > this.x + 5 &&
+            player.y + player.height > this.y + forgiveness && 
+            player.y < this.y + this.h) {
+            
+            if (this.type === 'goo') {
+                killPlayer(player.type, "被绿泥溶化了!");
+            } else if (this.type === 'fire' && player.type === 'water') {
+                killPlayer(player.type, "水娃被蒸发了!");
+            } else if (this.type === 'water' && player.type === 'fire') {
+                killPlayer(player.type, "火娃熄灭了!");
+            }
+        }
+    }
+}
+
+class Door {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.w = 40;
+        this.h = 60;
+        this.type = type; // 'fire' or 'water'
+    }
+
+    draw(active) {
+        let color = this.type === 'fire' ? COLORS.doorRed : COLORS.doorBlue;
+        let borderColor = this.type === 'fire' ? COLORS.fire : COLORS.water;
+        
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 3;
+        ctx.fillStyle = color;
+        
+        // Door Arch shape
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + this.h);
+        ctx.lineTo(this.x, this.y + 20);
+        ctx.arc(this.x + this.w/2, this.y + 20, this.w/2, Math.PI, 0);
+        ctx.lineTo(this.x + this.w, this.y + this.h);
+        ctx.fill();
+        ctx.stroke();
+
+        // Symbol
+        ctx.fillStyle = active ? "#FFF" : "rgba(255,255,255,0.2)";
+        ctx.beginPath();
+        if (this.type === 'fire') { // Triangle
+            ctx.moveTo(this.x + 10, this.y + 45);
+            ctx.lineTo(this.x + 20, this.y + 25);
+            ctx.lineTo(this.x + 30, this.y + 45);
+        } else { // Circle
+            ctx.arc(this.x + 20, this.y + 35, 8, 0, Math.PI*2);
+        }
+        ctx.fill();
+    }
+
+    check(player) {
+        if (player.type !== this.type) return false;
+        // Player must be mostly inside the door and standing still(ish)
+        if (Math.abs(player.x + player.width/2 - (this.x + this.w/2)) < 10 &&
+            Math.abs((player.y + player.height) - (this.y + this.h)) < 5 &&
+            Math.abs(player.vx) < 1) {
+            return true;
+        }
+        return false;
+    }
+}
+
+class Gem {
+    constructor(x, y, type) {
+        this.x = x;
+        this.y = y;
+        this.w = 20;
+        this.h = 20;
+        this.type = type; // 'fire' or 'water'
+        this.collected = false;
+    }
+
+    draw() {
+        if (this.collected) return;
+        ctx.fillStyle = this.type === 'fire' ? COLORS.diamondRed : COLORS.diamondBlue;
+        
+        // Diamond shape
+        ctx.beginPath();
+        ctx.moveTo(this.x + 10, this.y);
+        ctx.lineTo(this.x + 20, this.y + 10);
+        ctx.lineTo(this.x + 10, this.y + 20);
+        ctx.lineTo(this.x, this.y + 10);
+        ctx.fill();
+    }
+
+    checkCollision(player) {
+        if (this.collected) return;
+        if (player.type !== this.type) return; // Can only pick up own gems
+
+        if (player.x < this.x + this.w &&
+            player.x + player.width > this.x &&
+            player.y < this.y + this.h &&
+            player.y + player.height > this.y) {
+            this.collected = true;
+        }
+    }
+}
+
+class Button {
+    constructor(x, y, id) {
+        this.x = x;
+        this.y = y + 30; // Sit on floor
+        this.w = 40;
+        this.h = 10;
+        this.id = id; // Controls gates with this ID
+        this.pressed = false;
+    }
+
+    update(players) {
+        this.pressed = false;
+        for(let p of players) {
+            if (p.x < this.x + this.w && p.x + p.width > this.x &&
+                p.y + p.height >= this.y && p.y + p.height <= this.y + this.h + 5) {
+                this.pressed = true;
+            }
+        }
+    }
+
+    draw() {
+        ctx.fillStyle = "#555"; // Base
+        ctx.fillRect(this.x - 5, this.y + 5, this.w + 10, 5);
+        
+        // Button
+        ctx.fillStyle = this.pressed ? "purple" : "mediumpurple";
+        let pressOffset = this.pressed ? 5 : 0;
+        ctx.fillRect(this.x, this.y + pressOffset, this.w, this.h - pressOffset);
+    }
+}
+
+class Gate {
+    constructor(x, y, w, h, id) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+        this.id = id;
+        this.isOpen = false;
+    }
+
+    update(buttons) {
+        // Find button with matching ID
+        const btn = buttons.find(b => b.id === this.id);
+        if (btn) {
+            this.isOpen = btn.pressed;
+        }
+    }
+
+    draw() {
+        if (this.isOpen) {
+            // Draw outline indicating open path
+            ctx.strokeStyle = "rgba(150,150,150,0.3)";
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(this.x, this.y, this.w, this.h);
+            ctx.setLineDash([]);
+        } else {
+            // Draw solid gate
+            ctx.fillStyle = "#888";
+            ctx.fillRect(this.x, this.y, this.w, this.h);
+            // Draw mechanical details
+            ctx.fillStyle = "#555";
+            ctx.fillRect(this.x + 2, this.y + 2, this.w - 4, this.h - 4);
+            
+            // X cross
+            ctx.beginPath();
+            ctx.strokeStyle = "#333";
+            ctx.lineWidth = 2;
+            ctx.moveTo(this.x, this.y);
+            ctx.lineTo(this.x + this.w, this.y + this.h);
+            ctx.moveTo(this.x + this.w, this.y);
+            ctx.lineTo(this.x, this.y + this.h);
+            ctx.stroke();
+        }
+    }
+}
+
+// Global Level Objects
+let fireboy, watergirl;
+let platforms = [];
+let hazards = [];
+let doors = [];
+let gems = [];
+let buttons = [];
+let gates = [];
+
+// Levels Data
+const LEVELS = [
+    // Level 1: Basics
+    {
+        platforms: [
+            {x:0, y:0, w:40, h:600}, {x:760, y:0, w:40, h:600}, {x:0, y:560, w:800, h:40}, // Borders
+            {x:0, y:0, w:800, h:40}, // Top
+            {x:40, y:400, w:150, h:20}, 
+            {x:250, y:350, w:300, h:20},
+            {x:600, y:270, w:160, h:20}, // Lowered from 250 to 270
+            {x:40, y:180, w:200, h:20}   // Lowered from 150 to 180
+        ],
+        hazards: [
+            {x: 200, y: 540, w: 100, h: 20, type: 'fire'},
+            {x: 400, y: 540, w: 100, h: 20, type: 'water'},
+            {x: 280, y: 330, w: 80, h: 20, type: 'goo'}
+        ],
+        gems: [
+            {x: 240, y: 480, type: 'fire'},
+            {x: 440, y: 480, type: 'water'},
+            {x: 620, y: 220, type: 'fire'} // Adjusted for platform height
+        ],
+        doors: [
+            {x: 50, y: 120, type: 'fire'},  // Adjusted for platform height
+            {x: 120, y: 120, type: 'water'}
+        ],
+        start: { fire: {x: 60, y: 450}, water: {x: 100, y: 450} },
+        buttons: [],
+        gates: []
+    },
+    // Level 2: Buttons & Gates
+    {
+        platforms: [
+            {x:0, y:0, w:40, h:600}, {x:760, y:0, w:40, h:600}, {x:0, y:560, w:800, h:40},
+            {x:0, y:0, w:800, h:40},
+            {x:40, y:450, w:200, h:20}, // Start platform
+            {x:300, y:350, w:200, h:20}, // Middle platform
+            {x:550, y:250, w:150, h:20}, // Top Right
+            {x:40, y:200, w:200, h:20}, // Top Left (Destination)
+            {x:240, y:450, w:520, h:20} // Lower floor right
+        ],
+        hazards: [
+            {x: 500, y: 540, w: 200, h: 20, type: 'goo'}
+        ],
+        gems: [
+            {x: 350, y: 300, type: 'water'},
+            {x: 600, y: 200, type: 'fire'}
+        ],
+        buttons: [
+            {x: 150, y: 410, id: 1}, // Button on start platform
+            {x: 600, y: 210, id: 2}  // Button on top right
+        ],
+        gates: [
+            {x: 260, y: 300, w: 20, h: 150, id: 1}, // Blocks jump to middle
+            {x: 260, y: 50, w: 20, h: 150, id: 2}   // Blocks access to doors
+        ],
+        doors: [
+            {x: 50, y: 140, type: 'water'},
+            {x: 120, y: 140, type: 'fire'}
+        ],
+        start: { fire: {x: 50, y: 350}, water: {x: 100, y: 350} }
+    },
+    // Level 3: Hard
+    {
+        platforms: [
+            {x:0, y:0, w:40, h:600}, {x:760, y:0, w:40, h:600}, {x:0, y:560, w:800, h:40},
+            {x:0, y:0, w:800, h:40},
+            {x:200, y:500, w:400, h:20},
+            {x:40, y:400, w:100, h:20}, {x:660, y:400, w:100, h:20},
+            {x:180, y:300, w:440, h:20},
+            {x:350, y:200, w:100, h:20} // Lowered from 180 to 200
+        ],
+        hazards: [
+            {x: 40, y: 540, w: 720, h: 20, type: 'goo'}, // Floor is lava(goo)
+            {x: 220, y: 480, w: 100, h: 20, type: 'fire'},
+            {x: 480, y: 480, w: 100, h: 20, type: 'water'}
+        ],
+        gems: [
+            {x: 60, y: 350, type: 'fire'},
+            {x: 700, y: 350, type: 'water'},
+            {x: 390, y: 150, type: 'fire'}, // Adjusted for platform
+            {x: 400, y: 440, type: 'water'} // Tricky
+        ],
+        buttons: [
+            {x: 390, y: 260, id: 1} // Middle button
+        ],
+        gates: [
+            {x: 100, y: 250, w: 600, h: 20, id: 1} 
+        ],
+        doors: [
+            {x: 320, y: 140, type: 'fire'}, // Adjusted for platform
+            {x: 420, y: 140, type: 'water'}
+        ],
+        start: { fire: {x: 350, y: 450}, water: {x: 410, y: 450} }
+    }
+];
+
+// Correcting Level 3 gate logic:
+LEVELS[2].gates = [ {x: 300, y: 180, w: 20, h: 120, id: 1}, {x: 480, y: 180, w: 20, h: 120, id: 1} ]; 
+
+function initLevel(levelIndex) {
+    const data = LEVELS[levelIndex];
+    platforms = data.platforms;
+    hazards = data.hazards.map(h => new Hazard(h.x, h.y, h.w, h.h, h.type));
+    gems = data.gems.map(g => new Gem(g.x, g.y, g.type));
+    doors = data.doors.map(d => new Door(d.x, d.y, d.type));
+    buttons = (data.buttons || []).map(b => new Button(b.x, b.y, b.id));
+    gates = (data.gates || []).map(g => new Gate(g.x, g.y, g.w, g.h, g.id));
+    
+    fireboy = new Player('fire', data.start.fire.x, data.start.fire.y);
+    watergirl = new Player('water', data.start.water.x, data.start.water.y);
+    
+    document.getElementById('level-display').innerText = `LEVEL ${levelIndex + 1}`;
+    updateGemDisplay();
+}
+
+function updateGemDisplay() {
+    const total = gems.length;
+    const collected = gems.filter(g => g.collected).length;
+    document.getElementById('gem-display').innerText = `💎 ${collected}/${total}`;
+}
+
+function killPlayer(type, reason) {
+    if (gameState !== 'PLAYING') return;
+    if (type === 'fire') fireboy.dead = true;
+    else watergirl.dead = true;
+    
+    gameState = 'GAMEOVER';
+    document.getElementById('death-reason').innerText = `${type === 'fire' ? '火娃' : '水娃'} ${reason}`;
+    showOverlay('game-over');
+}
+
+function checkWinCondition() {
+    fireboy.atDoor = doors.find(d => d.type === 'fire').check(fireboy);
+    watergirl.atDoor = doors.find(d => d.type === 'water').check(watergirl);
+
+    if (fireboy.atDoor && watergirl.atDoor) {
+        gameState = 'LEVEL_COMPLETE';
+        if (currentLevelIdx >= LEVELS.length - 1) {
+            showOverlay('game-victory');
+        } else {
+            showOverlay('level-complete');
+        }
+    }
+}
+
+function update() {
+    if (gameState !== 'PLAYING') return;
+
+    // Update Buttons & Gates
+    buttons.forEach(b => b.update([fireboy, watergirl]));
+    gates.forEach(g => g.update(buttons));
+
+    // Update Players
+    fireboy.update(platforms, gates);
+    watergirl.update(platforms, gates);
+
+    // Check Hazards
+    hazards.forEach(h => {
+        h.checkCollision(fireboy);
+        h.checkCollision(watergirl);
+    });
+
+    // Check Gems
+    gems.forEach(g => {
+        g.checkCollision(fireboy);
+        g.checkCollision(watergirl);
+    });
+    updateGemDisplay();
+
+    // Check Win
+    checkWinCondition();
+}
+
+function draw() {
+    // Clear
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Draw Platforms
+    ctx.fillStyle = COLORS.wall;
+    platforms.forEach(p => {
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        // Simple texture detail
+        ctx.strokeStyle = "#5a4a42";
+        ctx.strokeRect(p.x, p.y, p.w, p.h);
+    });
+
+    // Draw Elements
+    gates.forEach(g => g.draw());
+    buttons.forEach(b => b.draw());
+    doors.forEach(d => d.draw(d.type === 'fire' ? fireboy.atDoor : watergirl.atDoor));
+    hazards.forEach(h => h.draw());
+    gems.forEach(g => g.draw());
+    
+    fireboy.draw();
+    watergirl.draw();
+}
+
+function gameLoop() {
+    update();
+    draw();
+    requestFrameId = requestAnimationFrame(gameLoop);
+}
+
+// UI & Control Logic
+function startGame() {
+    currentLevelIdx = 0;
+    startLevel(0);
+}
+
+function startLevel(idx) {
+    initLevel(idx);
+    gameState = 'PLAYING';
+    hideOverlays();
+    if (requestFrameId) cancelAnimationFrame(requestFrameId);
+    gameLoop();
+}
+
+function nextLevel() {
+    currentLevelIdx++;
+    startLevel(currentLevelIdx);
+}
+
+function restartLevel() {
+    startLevel(currentLevelIdx);
+}
+
+function resetGame() {
+    gameState = 'MENU';
+    showOverlay('game-intro');
+    document.getElementById('title-text').style.display = 'block';
+    document.getElementById('game-intro').classList.remove('hidden');
+    document.getElementById('game-victory').classList.add('hidden');
+}
+
+// Overlay Management
+function hideOverlays() {
+    document.getElementById('message-overlay').classList.add('hidden');
+    // Reset specific internals
+    document.getElementById('game-intro').classList.add('hidden');
+    document.getElementById('game-over').classList.add('hidden');
+    document.getElementById('level-complete').classList.add('hidden');
+    document.getElementById('game-victory').classList.add('hidden');
+}
+
+function showOverlay(id) {
+    document.getElementById('message-overlay').classList.remove('hidden');
+    document.getElementById(id).classList.remove('hidden');
+    
+    // Special case for main menu
+    if (id === 'game-intro') {
+        document.getElementById('title-text').style.display = 'block';
+    } else {
+        document.getElementById('title-text').style.display = 'none';
+    }
+}
+
+// Input Handling
+window.addEventListener('keydown', e => {
+    keys[e.key] = true;
+    // Prevent scrolling with arrows/space
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].indexOf(e.code) > -1) {
+        e.preventDefault();
+    }
+});
+
+window.addEventListener('keyup', e => {
+    keys[e.key] = false;
+});
+
+// Initial Render
+ctx.fillStyle = COLORS.bg;
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+</script>
+</body>
+</html>

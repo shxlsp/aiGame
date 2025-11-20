@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Cyberpunk Racer: Neon Drift</title>
+    
+    <!-- 引入 React 和 ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- 引入 Babel 用于解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 引入 Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- 引入 Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+
+    <!-- 字体 -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Orbitron', sans-serif; }
+        canvas { display: block; }
+        .neon-text {
+            text-shadow: 0 0 5px #00ffff, 0 0 10px #00ffff, 0 0 20px #00ffff;
+        }
+        .neon-border {
+            box-shadow: 0 0 5px #ff00ff, inset 0 0 5px #ff00ff;
+            border: 1px solid #ff00ff;
+        }
+        .scanline {
+            width: 100%;
+            height: 100px;
+            z-index: 10;
+            background: linear-gradient(0deg, rgba(0,0,0,0) 0%, rgba(0, 255, 255, 0.1) 50%, rgba(0,0,0,0) 100%);
+            opacity: 0.1;
+            position: absolute;
+            bottom: 100%;
+            animation: scanline 10s linear infinite;
+            pointer-events: none;
+        }
+        @keyframes scanline {
+            0% { bottom: 100%; }
+            100% { bottom: -100%; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // ==========================================
+        // 模块 1: 配置与常量
+        // ==========================================
+        const MAP_THEMES = {
+            CITY: { name: "夜之城", sky: 0x050510, fog: 0x050510, grid: 0xff00ff, road: 0x111111, ambient: 0.5, envType: 'buildings' },
+            GOBI: { name: "辐射戈壁", sky: 0x2a1505, fog: 0x4a2505, grid: 0xffaa00, road: 0x2a1a11, ambient: 0.7, envType: 'rocks' },
+            SKY: { name: "天穹高速", sky: 0x001133, fog: 0x002244, grid: 0x00ffff, road: 0x001122, ambient: 0.6, envType: 'clouds' }
+        };
+
+        const GAME_CONFIG = {
+            maxSpeed: 2.8,
+            turnSpeed: 0.035,
+            friction: 0.97,
+            cameraHeight: 5, // 降低相机高度，增加速度感
+            cameraDistance: 9 // 拉近距离
+        };
+
+        const randomRange = (min, max) => Math.random() * (max - min) + min;
+
+        // ==========================================
+        // 模块 2: 3D 资源生成
+        // ==========================================
+        function createCarMesh(color, isPlayer = false) {
+            const carGroup = new THREE.Group();
+
+            // 1. 车身
+            const bodyGeo = new THREE.BoxGeometry(2, 0.6, 4);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.3, metalness: 0.7 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            body.position.y = 0.6;
+            carGroup.add(body);
+
+            // 2. 驾驶舱
+            const cabinGeo = new THREE.BoxGeometry(1.4, 0.5, 2);
+            const cabinMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1, metalness: 0.9 });
+            const cabin = new THREE.Mesh(cabinGeo, cabinMat);
+            cabin.position.set(0, 1.1, -0.2);
+            carGroup.add(cabin);
+
+            // 3. 轮子
+            const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.2, 16);
+            wheelGeo.rotateZ(Math.PI / 2);
+            const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
+            const rimMat = new THREE.MeshBasicMaterial({ color: isPlayer ? 0x00ffff : 0xffaa00 });
+
+            const wheelPositions = [{ x: 1.1, z: 1.2 }, { x: -1.1, z: 1.2 }, { x: 1.1, z: -1.2 }, { x: -1.1, z: -1.2 }];
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+                wheel.position.set(pos.x, 0.4, pos.z);
+                const rim = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.02, 8, 16).rotateY(Math.PI/2), rimMat);
+                wheel.add(rim);
+                carGroup.add(wheel);
+            });
+
+            // 4. 尾灯
+            const tailLight = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.1), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+            tailLight.position.set(0, 0.7, 2.01);
+            carGroup.add(tailLight);
+
+            if (isPlayer) {
+                const light = new THREE.PointLight(0x00ffff, 1, 30);
+                light.position.set(0, 1, -3);
+                carGroup.add(light);
+            }
+            
+            // 所有的车都加阴影
+            carGroup.traverse(child => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+
+            return carGroup;
+        }
+
+        // ==========================================
+        // 模块 3: 网络管理
+        // ==========================================
+        class NetworkManager {
+            constructor(appId, updateCallback) {
+                this.appId = appId;
+                this.updateCallback = updateCallback;
+                this.db = null;
+                this.auth = null;
+                this.userId = null;
+                this.lastUpdate = 0;
+            }
+
+            async init() {
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(JSON.parse(__firebase_config));
+                }
+                this.auth = firebase.auth();
+                this.db = firebase.firestore();
+
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await this.auth.signInWithCustomToken(__initial_auth_token);
+                } else {
+                    await this.auth.signInAnonymously();
+                }
+
+                this.userId = this.auth.currentUser.uid;
+                this.collectionRef = this.db.collection('artifacts').doc(this.appId).collection('public').doc('data').collection('racers');
+
+                this.collectionRef.onSnapshot(snapshot => {
+                    const players = {};
+                    snapshot.forEach(doc => {
+                        if (doc.id !== this.userId) players[doc.id] = doc.data();
+                    });
+                    this.updateCallback(players);
+                });
+
+                window.addEventListener('beforeunload', () => this.removeSelf());
+            }
+
+            updatePosition(x, z, rotation, speed) {
+                const now = Date.now();
+                if (now - this.lastUpdate < 50) return;
+                if (this.userId) {
+                    this.collectionRef.doc(this.userId).set({ x, z, r: rotation, s: speed, t: now }, { merge: true }).catch(console.error);
+                    this.lastUpdate = now;
+                }
+            }
+
+            removeSelf() {
+                if (this.userId) this.collectionRef.doc(this.userId).delete();
+            }
+        }
+
+        // ==========================================
+        // 模块 4: 游戏引擎核心 (修复Bot与相机)
+        // ==========================================
+        class GameEngine {
+            constructor(container, networkManager) {
+                this.container = container;
+                this.network = networkManager;
+                const themes = Object.values(MAP_THEMES);
+                this.currentTheme = themes[Math.floor(Math.random() * themes.length)];
+                
+                this.velocity = { x: 0, z: 0 };
+                this.speed = 0;
+                this.rotation = 0;
+                this.keys = { w: false, a: false, s: false, d: false };
+                
+                this.bots = [];
+                this.envObjects = [];
+                this.enemyCars = {};
+
+                this.init();
+            }
+
+            init() {
+                // 场景
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(this.currentTheme.sky);
+                this.scene.fog = new THREE.FogExp2(this.currentTheme.fog, 0.015);
+
+                // 相机
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                this.camera.position.set(0, GAME_CONFIG.cameraHeight, GAME_CONFIG.cameraDistance);
+
+                // 渲染器
+                this.renderer = new THREE.WebGLRenderer({ antialias: true });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.container.appendChild(this.renderer.domElement);
+
+                // 灯光
+                this.scene.add(new THREE.AmbientLight(this.currentTheme.sky, this.currentTheme.ambient));
+                const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                dirLight.position.set(20, 50, 20);
+                dirLight.castShadow = true;
+                this.scene.add(dirLight);
+
+                // 实体
+                this.createRoad();
+                this.createEnvironment();
+                
+                this.playerCar = createCarMesh(0x00ffff, true);
+                this.scene.add(this.playerCar);
+
+                // 创建AI (修复方向)
+                this.createBots(4);
+
+                window.addEventListener('resize', () => this.onResize());
+                window.addEventListener('keydown', e => this.handleKey(e, true));
+                window.addEventListener('keyup', e => this.handleKey(e, false));
+
+                this.animate();
+            }
+
+            createBots(count) {
+                const colors = [0xff00ff, 0x00ff00, 0xffff00, 0xff8800];
+                for (let i = 0; i < count; i++) {
+                    const botMesh = createCarMesh(colors[i % colors.length], false);
+                    
+                    // 修正：Bot 初始在玩家前方 (负Z轴)
+                    // 玩家在 0，前方是 -20, -40 等
+                    const startZ = -(20 + i * 15); 
+                    const startX = (Math.random() * 20) - 10;
+                    
+                    botMesh.position.set(startX, 0, startZ);
+                    this.scene.add(botMesh);
+                    
+                    this.bots.push({
+                        mesh: botMesh,
+                        z: startZ,
+                        x: startX,
+                        laneX: startX,
+                        speedOffset: randomRange(0.9, 1.1) // 个性化速度因子
+                    });
+                }
+            }
+
+            updateBots() {
+                this.bots.forEach(bot => {
+                    // 1. AI 橡皮筋机制 (Rubber Banding)
+                    // 如果玩家太快，Bot加速；玩家太慢，Bot减速。保持竞争感。
+                    const targetSpeed = Math.abs(this.speed) > 0.1 ? Math.abs(this.speed) : 0.5;
+                    const distToPlayer = bot.z - this.playerCar.position.z; // 如果Bot在前面，值为负 (e.g. -50 - 0 = -50)
+                    
+                    let botSpeed = targetSpeed * bot.speedOffset;
+
+                    // Bot在玩家后面太远 -> 加速
+                    if (distToPlayer > 20) botSpeed *= 1.2;
+                    // Bot在玩家前面太远 -> 减速
+                    if (distToPlayer < -50) botSpeed *= 0.8;
+
+                    // 2. 移动逻辑 (修正方向：向负Z移动)
+                    bot.z -= botSpeed; 
+                    
+                    // 3. 简单的变道逻辑
+                    if (Math.random() < 0.01) {
+                        bot.laneX = (Math.floor(Math.random() * 3) - 1) * 10; // -10, 0, 10
+                    }
+                    bot.x += (bot.laneX - bot.x) * 0.05;
+
+                    bot.mesh.position.z = bot.z;
+                    bot.mesh.position.x = bot.x;
+
+                    // 4. 循环复用：如果Bot被甩得太远(>100)，瞬移到玩家前方
+                    if (bot.z > this.playerCar.position.z + 50) {
+                        bot.z = this.playerCar.position.z - 200 - Math.random() * 50;
+                        bot.x = (Math.floor(Math.random() * 3) - 1) * 10;
+                        bot.mesh.position.x = bot.x;
+                    }
+                });
+            }
+
+            createRoad() {
+                const plane = new THREE.Mesh(new THREE.PlaneGeometry(2000, 2000), new THREE.MeshStandardMaterial({ color: this.currentTheme.road, roughness: 0.9 }));
+                plane.rotation.x = -Math.PI / 2;
+                plane.receiveShadow = true;
+                this.scene.add(plane);
+                
+                const grid = new THREE.GridHelper(2000, 200, this.currentTheme.grid, this.currentTheme.grid);
+                grid.position.y = 0.02;
+                grid.material.opacity = 0.4;
+                grid.material.transparent = true;
+                this.scene.add(grid);
+            }
+
+            createEnvironment() {
+                const { envType } = this.currentTheme;
+                for (let i = 0; i < 100; i++) {
+                    let mesh;
+                    const h = randomRange(5, 40);
+                    const w = randomRange(2, 10);
+                    
+                    if (envType === 'buildings') {
+                        mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), new THREE.MeshStandardMaterial({ color: 0x111111, emissive: Math.random()>0.7 ? this.currentTheme.grid : 0x000000, emissiveIntensity: 0.8 }));
+                    } else if (envType === 'rocks') {
+                        mesh = new THREE.Mesh(new THREE.ConeGeometry(w, h, 4), new THREE.MeshStandardMaterial({ color: 0x5a3a2a, flatShading: true }));
+                    } else {
+                        mesh = new THREE.Mesh(new THREE.BoxGeometry(w*4, 1, w*4), new THREE.MeshStandardMaterial({ color: 0xcccccc, transparent: true, opacity: 0.5 }));
+                        mesh.position.y = randomRange(-5, 15);
+                    }
+
+                    if (envType !== 'clouds') mesh.position.y = h / 2;
+                    mesh.position.x = (Math.random() > 0.5 ? 1 : -1) * randomRange(20, 200);
+                    mesh.position.z = randomRange(-1000, 100);
+                    mesh.castShadow = true;
+                    mesh.receiveShadow = true;
+                    this.scene.add(mesh);
+                    this.envObjects.push(mesh);
+                }
+            }
+
+            handleKey(e, isDown) {
+                const k = e.key.toLowerCase();
+                if (['w','arrowup'].includes(k)) this.keys.w = isDown;
+                if (['s','arrowdown'].includes(k)) this.keys.s = isDown;
+                if (['a','arrowleft'].includes(k)) this.keys.a = isDown;
+                if (['d','arrowright'].includes(k)) this.keys.d = isDown;
+            }
+
+            updatePhysics() {
+                // 车辆物理
+                if (this.keys.w) this.speed += 0.04;
+                if (this.keys.s) this.speed -= 0.06;
+                this.speed *= GAME_CONFIG.friction;
+                this.speed = Math.max(Math.min(this.speed, GAME_CONFIG.maxSpeed), -1.0);
+
+                if (Math.abs(this.speed) > 0.01) {
+                    const dir = this.speed > 0 ? 1 : -1;
+                    if (this.keys.a) this.rotation += GAME_CONFIG.turnSpeed * dir;
+                    if (this.keys.d) this.rotation -= GAME_CONFIG.turnSpeed * dir;
+                }
+                // 自动回正
+                if (!this.keys.a && !this.keys.d) this.rotation *= 0.92;
+
+                this.velocity.z = -Math.cos(this.rotation) * this.speed;
+                this.velocity.x = -Math.sin(this.rotation) * this.speed;
+
+                this.playerCar.position.x += this.velocity.x;
+                this.playerCar.position.z += this.velocity.z;
+                this.playerCar.rotation.y = this.rotation;
+                this.playerCar.rotation.z = -this.rotation * 0.3; // 侧倾
+
+                // === 优化的相机追随逻辑 ===
+                // 1. 计算理想相机位置：车后上方
+                const angleLag = this.rotation * 0.5; // 稍微滞后一点的旋转角度，产生漂移感
+                const targetCamX = this.playerCar.position.x - Math.sin(angleLag) * -GAME_CONFIG.cameraDistance;
+                const targetCamZ = this.playerCar.position.z - Math.cos(angleLag) * -GAME_CONFIG.cameraDistance;
+                
+                // 2. 动态FOV (速度越快，FOV越大)
+                const targetFOV = 75 + Math.abs(this.speed) * 10;
+                this.camera.fov += (targetFOV - this.camera.fov) * 0.05;
+                this.camera.updateProjectionMatrix();
+
+                // 3. 平滑插值 (Lerp) 更新相机位置
+                this.camera.position.x += (targetCamX - this.camera.position.x) * 0.1; // X轴稍微慢一点，更有甩尾感
+                this.camera.position.z += (targetCamZ - this.camera.position.z) * 0.2; // Z轴紧一点
+                this.camera.position.y += (GAME_CONFIG.cameraHeight - this.camera.position.y) * 0.1;
+
+                // 4. LookAt 也要动态：看向车前方远处，而不是车中心
+                const lookTargetX = this.playerCar.position.x - Math.sin(this.rotation) * 10;
+                const lookTargetZ = this.playerCar.position.z - Math.cos(this.rotation) * 10;
+                this.camera.lookAt(lookTargetX, this.playerCar.position.y, lookTargetZ);
+
+                // 环境循环
+                this.envObjects.forEach(obj => {
+                    if (obj.position.z > this.playerCar.position.z + 50) {
+                        obj.position.z -= 1000;
+                        obj.position.x = (Math.random() > 0.5 ? 1 : -1) * randomRange(20, 200);
+                    }
+                });
+
+                if (this.network && Math.abs(this.speed) > 0.01) {
+                    this.network.updatePosition(this.playerCar.position.x, this.playerCar.position.z, this.rotation, this.speed);
+                }
+            }
+
+            updateNetworkPlayers(playersData) {
+                const now = Date.now();
+                Object.keys(playersData).forEach(id => {
+                    const p = playersData[id];
+                    if (now - p.t > 5000) return; // 5秒超时
+                    if (!this.enemyCars[id]) {
+                        const mesh = createCarMesh(0xff3333, false);
+                        this.scene.add(mesh);
+                        this.enemyCars[id] = { mesh };
+                    }
+                    const enemy = this.enemyCars[id].mesh;
+                    enemy.position.x += (p.x - enemy.position.x) * 0.2;
+                    enemy.position.z += (p.z - enemy.position.z) * 0.2;
+                    enemy.rotation.y = p.r;
+                });
+            }
+
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                this.updatePhysics();
+                this.updateBots();
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            onResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+            
+            getThemeName() { return this.currentTheme.name; }
+        }
+
+        // ==========================================
+        // 模块 5: React UI
+        // ==========================================
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            const mountRef = useRef(null);
+            const engineRef = useRef(null);
+            const [count, setCount] = useState(1);
+            const [theme, setTheme] = useState('加载中');
+            const [showIntro, setShowIntro] = useState(true);
+
+            useEffect(() => {
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default';
+                const net = new NetworkManager(appId, (players) => {
+                    setCount(Object.keys(players).length + 1);
+                    if (engineRef.current) engineRef.current.updateNetworkPlayers(players);
+                });
+
+                net.init().then(() => {
+                    if (!engineRef.current && mountRef.current) {
+                        engineRef.current = new GameEngine(mountRef.current, net);
+                        setTheme(engineRef.current.getThemeName());
+                    }
+                });
+            }, []);
+
+            return (
+                <div className="relative w-full h-screen text-white">
+                    <div ref={mountRef} className="w-full h-full" />
+                    <div className="scanline pointer-events-none"></div>
+
+                    {/* HUD */}
+                    <div className="absolute inset-0 pointer-events-none p-6 flex flex-col justify-between">
+                        <div className="flex justify-between">
+                            <div className="bg-black/50 p-4 neon-border rounded skew-x-[-10deg]">
+                                <h1 className="text-3xl font-bold italic neon-text">NEON DRIFT</h1>
+                                <div className="text-xs text-cyan-300 mt-1">MAP: {theme}</div>
+                            </div>
+                            <div className="bg-black/50 p-4 neon-border rounded skew-x-[10deg] text-right">
+                                <div className="text-2xl font-bold text-pink-500">{count} 在线</div>
+                                <div className="text-xs text-yellow-400">AI 启用</div>
+                            </div>
+                        </div>
+
+                        {showIntro && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-auto bg-black/80 backdrop-blur-sm z-50">
+                                <div className="text-center border-2 border-cyan-500 p-8 rounded-xl max-w-md shadow-[0_0_30px_rgba(0,255,255,0.3)]">
+                                    <h2 className="text-3xl font-bold mb-6 neon-text">准备竞速</h2>
+                                    <div className="grid grid-cols-3 gap-4 mb-8 text-sm">
+                                        <div className="col-span-3 flex justify-center gap-2">
+                                            <kbd className="border border-white w-10 h-10 flex items-center justify-center rounded">W</kbd>
+                                        </div>
+                                        <div className="flex justify-center"><kbd className="border border-white w-10 h-10 flex items-center justify-center rounded">A</kbd></div>
+                                        <div className="flex justify-center"><kbd className="border border-white w-10 h-10 flex items-center justify-center rounded">S</kbd></div>
+                                        <div className="flex justify-center"><kbd className="border border-white w-10 h-10 flex items-center justify-center rounded">D</kbd></div>
+                                    </div>
+                                    <button onClick={() => setShowIntro(false)} className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 rounded font-bold hover:scale-105 transition">
+                                        启动引擎
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex justify-center">
+                            <div className="bg-black/60 px-12 py-2 rounded-t-xl neon-border flex items-baseline gap-3">
+                                <span className="text-gray-400 text-xs">SPEED</span>
+                                <span className="text-3xl font-mono italic text-cyan-400">TURBO</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
