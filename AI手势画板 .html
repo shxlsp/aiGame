@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 手势凌空画板</title>
+    <!-- 引入 Tailwind CSS 进行快速样式设计 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 MediaPipe 库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            cursor: none; /* 隐藏默认鼠标，使用我们的虚拟光标 */
+        }
+
+        /* 画布层级管理 */
+        #video-feed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: cover;
+            transform: scaleX(-1); /* 镜像视频 */
+            opacity: 0.1; /* 让摄像头画面稍微可见，作为背景 */
+            z-index: 0;
+        }
+
+        #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 10;
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 20; /* 光标和UI反馈在最上层 */
+            pointer-events: none; /* 让事件穿透到下方的DOM元素（用于检测位置） */
+        }
+
+        /* UI 元素 */
+        .ui-container {
+            position: absolute;
+            z-index: 15;
+            pointer-events: auto; /* 允许交互检测 */
+        }
+
+        .tool-btn {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        /* 选中状态的视觉反馈 */
+        .tool-btn.active {
+            transform: scale(1.1);
+            border: 3px solid white;
+            box-shadow: 0 0 15px rgba(255,255,255,0.5);
+        }
+
+        /* 帮助面板动画 */
+        .help-content {
+            opacity: 0;
+            visibility: hidden;
+            transform: translateX(20px);
+            transition: all 0.3s ease;
+        }
+
+        .help-trigger:hover .help-content {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(0);
+        }
+
+        /* 加载遮罩 */
+        #loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            color: white;
+            transition: opacity 0.5s;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 加载提示 -->
+    <div id="loader">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-500 mb-4"></div>
+        <h2 class="text-xl font-bold">正在初始化 AI 视觉引擎...</h2>
+        <p class="text-gray-400 mt-2">请允许摄像头权限，并确保光线充足</p>
+    </div>
+
+    <!-- 核心层 -->
+    <video id="video-feed" playsinline></video>
+    <canvas id="drawing-canvas"></canvas>
+    <canvas id="overlay-canvas"></canvas>
+
+    <!-- 左侧工具栏 -->
+    <div class="ui-container top-1/2 -translate-y-1/2 left-6 flex flex-col gap-4">
+        <!-- 颜色选择器 -->
+        <div class="interactable tool-btn w-16 h-16 rounded-full bg-red-500 shadow-lg" data-type="color" data-value="#EF4444"></div>
+        <div class="interactable tool-btn w-16 h-16 rounded-full bg-green-500 shadow-lg" data-type="color" data-value="#22C55E"></div>
+        <div class="interactable tool-btn w-16 h-16 rounded-full bg-blue-500 shadow-lg active" data-type="color" data-value="#3B82F6"></div>
+        <div class="interactable tool-btn w-16 h-16 rounded-full bg-yellow-400 shadow-lg" data-type="color" data-value="#FACC15"></div>
+        <div class="interactable tool-btn w-16 h-16 rounded-full bg-white shadow-lg border border-gray-500" data-type="color" data-value="#FFFFFF"></div>
+        
+        <!-- 分隔 -->
+        <div class="h-px bg-gray-700 my-2"></div>
+
+        <!-- 橡皮擦 (画笔颜色设为背景色透明或黑色) -->
+        <div class="interactable tool-btn w-16 h-16 rounded-lg bg-gray-600 flex items-center justify-center text-white shadow-lg" data-type="eraser">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+        </div>
+
+        <!-- 清空画布 -->
+        <div class="interactable tool-btn w-16 h-16 rounded-lg bg-red-800 flex items-center justify-center text-white shadow-lg" data-type="clear">
+            <span class="font-bold text-sm">清空</span>
+        </div>
+    </div>
+
+    <!-- 右侧帮助 -->
+    <div class="ui-container top-8 right-8 help-trigger group">
+        <div class="flex items-start justify-end">
+            <!-- 提示内容 -->
+            <div class="help-content bg-gray-800/90 text-white p-6 rounded-xl backdrop-blur-md shadow-2xl max-w-sm mr-4 border border-gray-600">
+                <h3 class="text-lg font-bold mb-3 text-blue-400">👋 手势操作指南</h3>
+                <ul class="space-y-3 text-sm">
+                    <li class="flex items-center">
+                        <span class="bg-blue-600 rounded p-1 mr-3 text-xs">移动</span>
+                        <span>举起手，用<strong>食指</strong>控制光标移动。</span>
+                    </li>
+                    <li class="flex items-center">
+                        <span class="bg-green-600 rounded p-1 mr-3 text-xs">绘画</span>
+                        <span><strong>食指 + 大拇指捏合</strong> 即可开始绘画（如同握笔）。</span>
+                    </li>
+                    <li class="flex items-center">
+                        <span class="bg-purple-600 rounded p-1 mr-3 text-xs">选中</span>
+                        <span>光标在按钮上<strong>停留</strong> 1.5秒触发点击。</span>
+                    </li>
+                </ul>
+                <div class="mt-4 text-xs text-gray-400 border-t border-gray-700 pt-2">
+                    💡 请保持距离摄像头 0.5 - 1 米，确保手部在画面内。
+                </div>
+            </div>
+
+            <!-- 问号图标 -->
+            <div class="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur border border-white/30 flex items-center justify-center text-white cursor-pointer transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+        </div>
+    </div>
+
+    <!-- 调试信息（可选，用于查看状态） -->
+    <div class="fixed bottom-4 right-4 text-gray-500 text-xs font-mono select-none pointer-events-none" id="status-text">
+        等待摄像头...
+    </div>
+
+    <script>
+        // --- 1. 初始化变量 ---
+        const videoElement = document.getElementById('video-feed');
+        const drawCanvas = document.getElementById('drawing-canvas');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const drawCtx = drawCanvas.getContext('2d');
+        const overlayCtx = overlayCanvas.getContext('2d');
+        const loader = document.getElementById('loader');
+        const statusText = document.getElementById('status-text');
+
+        // 设置画布大小
+        function resizeCanvas() {
+            drawCanvas.width = window.innerWidth;
+            drawCanvas.height = window.innerHeight;
+            overlayCanvas.width = window.innerWidth;
+            overlayCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // 状态管理
+        let currentColor = '#3B82F6';
+        let currentLineWidth = 8;
+        let isPinching = false;
+        let prevX = 0;
+        let prevY = 0;
+        
+        // 平滑处理变量
+        let cursorX = window.innerWidth / 2;
+        let cursorY = window.innerHeight / 2;
+        const SMOOTHING_FACTOR = 0.2; // 0-1, 越小越平滑但延迟越高
+
+        // 悬停交互 (Dwell) 变量
+        let hoveredElement = null;
+        let hoverStartTime = 0;
+        const DWELL_DURATION = 1000; // 1秒触发
+        const DWELL_RADIUS = 30;
+
+        // UI 元素缓存
+        let interactableElements = [];
+
+        function updateInteractables() {
+            interactableElements = Array.from(document.querySelectorAll('.interactable')).map(el => {
+                const rect = el.getBoundingClientRect();
+                return {
+                    element: el,
+                    rect: rect,
+                    centerX: rect.left + rect.width / 2,
+                    centerY: rect.top + rect.height / 2
+                };
+            });
+        }
+        // 初始更新并监听窗口大小变化
+        updateInteractables();
+        window.addEventListener('resize', updateInteractables);
+
+
+        // --- 2. 核心逻辑函数 ---
+
+        // 计算两点距离
+        function calculateDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // 线性插值用于平滑
+        function lerp(start, end, amt) {
+            return (1 - amt) * start + amt * end;
+        }
+
+        // 触发按钮点击
+        function triggerClick(item) {
+            const type = item.element.dataset.type;
+            
+            // 动画反馈
+            item.element.classList.add('scale-90');
+            setTimeout(() => item.element.classList.remove('scale-90'), 150);
+
+            if (type === 'color') {
+                currentColor = item.element.dataset.value;
+                // 更新UI选中状态
+                document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+                item.element.classList.add('active');
+                
+                // 如果是橡皮擦模式切回画笔，恢复混合模式
+                drawCtx.globalCompositeOperation = 'source-over';
+            } else if (type === 'eraser') {
+                currentColor = '#1a1a1a'; // 简单处理，或者使用 destination-out
+                drawCtx.globalCompositeOperation = 'destination-out';
+                document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+                item.element.classList.add('active');
+            } else if (type === 'clear') {
+                drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+            }
+        }
+
+        // --- 3. MediaPipe 处理 ---
+
+        function onResults(results) {
+            // 清除 Overlay 画布
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+            // 隐藏 Loading
+            if (loader.style.opacity !== '0') {
+                loader.style.opacity = '0';
+                setTimeout(() => loader.style.display = 'none', 500);
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 关键点：8 是食指尖，4 是大拇指尖
+                const indexFingerTip = landmarks[8];
+                const thumbTip = landmarks[4];
+
+                // 1. 坐标映射与平滑处理
+                // MediaPipe 的 x 是 0-1，且需要水平镜像（因为摄像头也是镜像的）
+                const targetX = (1 - indexFingerTip.x) * window.innerWidth;
+                const targetY = indexFingerTip.y * window.innerHeight;
+
+                cursorX = lerp(cursorX, targetX, SMOOTHING_FACTOR);
+                cursorY = lerp(cursorY, targetY, SMOOTHING_FACTOR);
+
+                // 2. 捏合检测 (Pinch Detection)
+                // 简单的欧几里得距离，注意这里的坐标是归一化的(0-1)，需要考虑到长宽比
+                // 也可以直接用屏幕坐标算距离，这里用归一化坐标算比较稳定
+                const pinchDist = calculateDistance(indexFingerTip, thumbTip);
+                
+                // 阈值，根据经验 0.05 左右比较合适
+                const PINCH_THRESHOLD = 0.08; 
+                const isCurrentlyPinching = pinchDist < PINCH_THRESHOLD;
+
+                // 3. 绘制逻辑
+                if (isCurrentlyPinching) {
+                    if (!isPinching) {
+                        // 刚开始捏合 (Mouse Down)
+                        drawCtx.beginPath();
+                        drawCtx.moveTo(cursorX, cursorY);
+                        isPinching = true;
+                    } else {
+                        // 保持捏合 (Mouse Drag)
+                        drawCtx.lineTo(cursorX, cursorY);
+                        drawCtx.strokeStyle = currentColor;
+                        drawCtx.lineWidth = currentLineWidth;
+                        drawCtx.lineCap = 'round';
+                        drawCtx.lineJoin = 'round';
+                        drawCtx.stroke();
+                    }
+                } else {
+                    isPinching = false;
+                    drawCtx.beginPath(); // 断开路径，防止连线
+                }
+
+                // 4. UI 悬停与交互逻辑 (仅当未在绘画时检测)
+                if (!isPinching) {
+                    let foundHover = false;
+                    
+                    for (let item of interactableElements) {
+                        // 简单的矩形碰撞检测
+                        if (cursorX >= item.rect.left && cursorX <= item.rect.right &&
+                            cursorY >= item.rect.top && cursorY <= item.rect.bottom) {
+                            
+                            foundHover = true;
+
+                            if (hoveredElement !== item.element) {
+                                // 刚进入新的元素
+                                hoveredElement = item.element;
+                                hoverStartTime = Date.now();
+                            } else {
+                                // 持续悬停，计算进度
+                                const elapsedTime = Date.now() - hoverStartTime;
+                                const progress = Math.min(elapsedTime / DWELL_DURATION, 1);
+                                
+                                // 绘制进度圆环
+                                overlayCtx.beginPath();
+                                overlayCtx.arc(cursorX, cursorY, 25, -Math.PI/2, (-Math.PI/2) + (Math.PI * 2 * progress));
+                                overlayCtx.strokeStyle = 'white';
+                                overlayCtx.lineWidth = 4;
+                                overlayCtx.stroke();
+
+                                // 触发
+                                if (progress >= 1) {
+                                    triggerClick(item);
+                                    hoverStartTime = Date.now(); // 重置以防止连续快速触发，或者设为未来很大值
+                                    // 可以在这里加个音效
+                                }
+                            }
+                            break; 
+                        }
+                    }
+
+                    if (!foundHover) {
+                        hoveredElement = null;
+                        hoverStartTime = 0;
+                    }
+                }
+
+                // 5. 绘制光标 (Cursor)
+                overlayCtx.beginPath();
+                overlayCtx.arc(cursorX, cursorY, isPinching ? 10 : 15, 0, 2 * Math.PI);
+                overlayCtx.fillStyle = isPinching ? currentColor : 'rgba(255, 255, 255, 0.8)';
+                overlayCtx.fill();
+                
+                // 光标外圈装饰
+                overlayCtx.strokeStyle = 'rgba(0,0,0,0.5)';
+                overlayCtx.lineWidth = 2;
+                overlayCtx.stroke();
+
+                statusText.innerText = `模式: ${isPinching ? '绘画 ✏️' : '移动 👆'} | 距离: ${pinchDist.toFixed(3)}`;
+
+            } else {
+                statusText.innerText = "未检测到手部";
+            }
+        }
+
+        // --- 4. 初始化 MediaPipe Hands ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        // --- 5. 启动摄像头 ---
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+
+        camera.start().catch(err => {
+            console.error("摄像头启动失败:", err);
+            loader.innerHTML = `<div class="text-red-500 text-center"><h2 class="text-xl font-bold">无法访问摄像头</h2><p>请检查权限设置或设备连接。</p></div>`;
+        });
+
+    </script>
+</body>
+</html>
