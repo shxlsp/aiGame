@@ -1,0 +1,1370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>领土争夺战 - Territory War</title>
+    <style>
+        :root {
+            --bg-color: #1a1a1a;
+            --ui-bg: rgba(30, 30, 30, 0.9);
+            --ui-border: #444;
+            --text-color: #eee;
+            --accent: #4caf50;
+        }
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        
+        /* UI Layers */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .panel {
+            pointer-events: auto;
+            background: var(--ui-bg);
+            border: 1px solid var(--ui-border);
+            border-radius: 8px;
+            padding: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        /* Start Screen */
+        #start-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px;
+            text-align: center;
+            z-index: 100;
+        }
+        .form-group {
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        label { display: block; margin-bottom: 5px; font-size: 0.9em; color: #aaa; }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            background: #222;
+            border: 1px solid #555;
+            color: white;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            font-size: 1em;
+            transition: background 0.2s;
+        }
+        button:hover { background: #43a047; }
+        button:disabled { background: #555; cursor: not-allowed; }
+
+        /* HUD */
+        #hud-top {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        #stats-panel {
+            font-size: 0.9em;
+            min-width: 200px;
+        }
+        .faction-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            align-items: center;
+        }
+        .color-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        /* Bottom Toolbar */
+        #toolbar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .tower-card {
+            width: 80px;
+            height: 100px;
+            background: rgba(40, 40, 40, 0.95);
+            border: 2px solid #555;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s, border-color 0.2s;
+            position: relative;
+        }
+        .tower-card:hover { transform: translateY(-5px); }
+        .tower-card.selected { border-color: var(--accent); background: rgba(50, 70, 50, 0.95); box-shadow: 0 0 10px var(--accent); }
+        .tower-icon { width: 40px; height: 40px; margin-bottom: 5px; position: relative; }
+        .tower-name { font-size: 12px; font-weight: bold; }
+        .tower-cost { font-size: 10px; color: #ffd700; margin-top: 2px; }
+        .hotkey { position: absolute; top: 2px; left: 5px; font-size: 10px; color: #777; font-weight: bold; }
+
+        /* Context Menu for Upgrades */
+        #context-menu {
+            position: absolute;
+            display: none;
+            width: 180px;
+            z-index: 50;
+        }
+        .upgrade-btn {
+            margin-top: 5px;
+            background: #333;
+            border: 1px solid #555;
+            font-size: 0.85em;
+        }
+
+        /* Notifications */
+        #notification-area {
+            position: absolute;
+            top: 20%;
+            left: 50%;
+            transform: translateX(-50%);
+            pointer-events: none;
+            text-align: center;
+        }
+        .toast {
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            margin-bottom: 5px;
+            animation: fadeOut 2s forwards;
+            font-size: 14px;
+        }
+        @keyframes fadeOut {
+            0% { opacity: 1; transform: translateY(0); }
+            80% { opacity: 1; transform: translateY(-10px); }
+            100% { opacity: 0; transform: translateY(-20px); }
+        }
+
+        /* End Screen */
+        #end-screen {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 200;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        #winner-text { font-size: 3em; font-weight: bold; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <!-- Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI Layer -->
+    <div id="ui-layer">
+        
+        <!-- Start Screen -->
+        <div id="start-screen" class="panel">
+            <h2 style="margin-top:0">领土争夺战配置</h2>
+            <div class="form-group">
+                <label>地图大小 (宽度 x 高度)</label>
+                <div style="display:flex; gap:5px;">
+                    <input type="number" id="map-w" value="100" min="20" max="5000">
+                    <span style="line-height:35px">x</span>
+                    <input type="number" id="map-h" value="100" min="20" max="5000">
+                </div>
+                <small style="color:#888; font-size:0.75em">最大支持 5000x5000 (需要较好配置)</small>
+            </div>
+            <div class="form-group">
+                <label>阵营数量 (2-4)</label>
+                <select id="faction-count">
+                    <option value="2">2 个阵营</option>
+                    <option value="3">3 个阵营</option>
+                    <option value="4" selected>4 个阵营</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>启用 AI 对手</label>
+                <input type="checkbox" id="enable-ai" checked style="width:auto; margin:0"> 
+                <span style="font-size:0.8em; color:#aaa">如果启用，除您以外的阵营由电脑控制</span>
+            </div>
+            <button onclick="Game.init()">开始游戏</button>
+        </div>
+
+        <!-- HUD Top -->
+        <div id="hud-top" style="display:none;">
+            <div id="stats-panel" class="panel">
+                <div style="border-bottom:1px solid #444; margin-bottom:5px; padding-bottom:5px; font-weight:bold;">战场形势</div>
+                <div id="score-list"></div>
+            </div>
+            <div class="panel" style="text-align:right;">
+                <div style="font-size:1.2em; font-weight:bold; color:#ffd700">金钱: <span id="money-display">0</span></div>
+                <div style="font-size:0.8em; color:#aaa">收入: <span id="income-display">0</span>/秒</div>
+            </div>
+        </div>
+
+        <!-- Bottom Toolbar -->
+        <div id="toolbar" style="display:none;">
+            <div class="tower-card" onclick="Game.selectTower(0)" id="card-0">
+                <div class="hotkey">1</div>
+                <div class="tower-icon">
+                    <!-- CSS drawn turret icon -->
+                    <div style="position:absolute; bottom:5px; left:10px; width:20px; height:20px; background:#aaa; border-radius:50%"></div>
+                    <div style="position:absolute; bottom:15px; left:18px; width:4px; height:15px; background:#888;"></div>
+                </div>
+                <div class="tower-name">机枪塔</div>
+                <div class="tower-cost">$100</div>
+            </div>
+            
+            <div class="tower-card" onclick="Game.selectTower(1)" id="card-1">
+                <div class="hotkey">2</div>
+                <div class="tower-icon">
+                     <!-- Laser icon -->
+                     <div style="position:absolute; top:10px; left:5px; width:30px; height:4px; background:#f44; box-shadow:0 0 4px #f00;"></div>
+                     <div style="position:absolute; top:5px; left:18px; width:4px; height:14px; background:#888;"></div>
+                </div>
+                <div class="tower-name">激光塔</div>
+                <div class="tower-cost">$250</div>
+            </div>
+
+            <div class="tower-card" onclick="Game.selectTower(2)" id="card-2">
+                <div class="hotkey">3</div>
+                <div class="tower-icon">
+                     <!-- Artillery icon -->
+                     <div style="position:absolute; bottom:5px; left:5px; width:30px; height:10px; background:#666; border-radius:2px;"></div>
+                     <div style="position:absolute; bottom:10px; left:5px; width:20px; height:8px; background:#444; transform: rotate(-30deg); transform-origin: bottom left;"></div>
+                </div>
+                <div class="tower-name">重炮</div>
+                <div class="tower-cost">$500</div>
+            </div>
+        </div>
+
+        <!-- Context Menu -->
+        <div id="context-menu" class="panel">
+            <h4 style="margin:0 0 5px 0" id="ctx-title">塔详情</h4>
+            <div style="font-size:0.8em; color:#aaa" id="ctx-stats"></div>
+            <div style="font-size:0.8em; color:#f66; margin-bottom:5px" id="ctx-hp"></div>
+            <button class="upgrade-btn" onclick="Game.upgradeSelectedTower()" id="btn-upgrade">升级 ($200)</button>
+            <button class="upgrade-btn" style="background:#822; border-color:#a44;" onclick="Game.sellSelectedTower()">出售 ($50)</button>
+            <button class="upgrade-btn" style="margin-top:10px" onclick="Game.closeContextMenu()">关闭</button>
+        </div>
+
+        <!-- Notifications -->
+        <div id="notification-area"></div>
+
+        <!-- End Screen -->
+        <div id="end-screen">
+            <div id="winner-text">阵营胜利</div>
+            <button onclick="location.reload()" style="width:200px">重新开始</button>
+        </div>
+    </div>
+
+<script>
+/**
+ * Game Configuration & Constants
+ */
+const COLORS = [
+    { hex: '#e0e0e0', name: '无主之地' }, // 0: Neutral
+    { hex: '#4caf50', name: '绿色军团' }, // 1: Player (usually)
+    { hex: '#2196f3', name: '蓝色联盟' }, // 2
+    { hex: '#f44336', name: '红色帝国' }, // 3
+    { hex: '#ffc107', name: '黄色部落' }  // 4
+];
+
+const TOWER_TYPES = [
+    { 
+        id: 0, name: '机枪塔', cost: 100, range: 15, color: '#aaa', 
+        desc: '射速快，扇形扫射', reload: 20, 
+        upgradeCost: 150,
+        baseHp: 500, baseDmg: 20
+    },
+    { 
+        id: 1, name: '激光塔', cost: 250, range: 40, color: '#f8f', 
+        desc: '贯穿直线，范围打击', reload: 120,
+        upgradeCost: 350,
+        baseHp: 300, baseDmg: 50
+    },
+    { 
+        id: 2, name: '重炮', cost: 500, range: 60, color: '#665', 
+        desc: '超远距离，3x3溅射', reload: 180,
+        upgradeCost: 600,
+        baseHp: 800, baseDmg: 150
+    }
+];
+
+class Utils {
+    static distance(x1, y1, x2, y2) { return Math.sqrt((x2-x1)**2 + (y2-y1)**2); }
+    static rand(min, max) { return Math.random() * (max - min) + min; }
+    static randInt(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+}
+
+/**
+ * Core Game Logic
+ */
+const Game = {
+    canvas: null,
+    ctx: null,
+    width: 0,
+    height: 0,
+    
+    // Map Data
+    mapW: 100,
+    mapH: 100,
+    grid: null, 
+    cellSize: 20, 
+    
+    // Entities
+    towers: [],
+    projectiles: [],
+    particles: [], 
+    
+    // Game State
+    factionCount: 4,
+    factions: [], 
+    myFactionId: 1,
+    gameOver: false,
+    useAI: true,
+    
+    // Camera / Viewport
+    camera: { x: 0, y: 0, zoom: 1 },
+    isDragging: false,
+    lastMouse: { x: 0, y: 0 },
+    
+    // Interaction
+    selectedTowerType: -1, 
+    hoverCell: { x: -1, y: -1 },
+    selectedTowerInstance: null, 
+
+    // Time
+    lastTime: 0,
+    frameCount: 0,
+
+    init() {
+        this.mapW = parseInt(document.getElementById('map-w').value) || 100;
+        this.mapH = parseInt(document.getElementById('map-h').value) || 100;
+        this.factionCount = parseInt(document.getElementById('faction-count').value);
+        this.useAI = document.getElementById('enable-ai').checked;
+
+        if(this.mapW > 5000) this.mapW = 5000;
+        if(this.mapH > 5000) this.mapH = 5000;
+
+        document.getElementById('start-screen').style.display = 'none';
+        document.getElementById('hud-top').style.display = 'flex';
+        document.getElementById('toolbar').style.display = 'flex';
+        
+        this.canvas = document.getElementById('gameCanvas');
+        this.ctx = this.canvas.getContext('2d', { alpha: false }); 
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+
+        this.grid = new Int8Array(this.mapW * this.mapH); 
+        
+        this.factions = [];
+        for(let i=0; i<=this.factionCount; i++) {
+            this.factions.push({
+                id: i,
+                money: i === 0 ? 0 : 500, 
+                score: 0,
+                color: COLORS[i] ? COLORS[i].hex : '#fff'
+            });
+        }
+
+        this.spawnBases();
+        this.setupInputs();
+
+        this.lastTime = performance.now();
+        requestAnimationFrame(t => this.loop(t));
+        
+        setInterval(() => this.economyTick(), 1000);
+
+        this.updateHUD();
+    },
+
+    spawnBases() {
+        const padding = Math.floor(Math.min(this.mapW, this.mapH) * 0.1);
+        
+        const corners = [
+            { x: padding, y: padding },
+            { x: this.mapW - padding, y: this.mapH - padding },
+            { x: this.mapW - padding, y: padding },
+            { x: padding, y: this.mapH - padding }
+        ];
+
+        for(let f=1; f<=this.factionCount; f++) {
+            let cx, cy;
+            if (f <= 4) {
+                cx = corners[f-1].x;
+                cy = corners[f-1].y;
+            } else {
+                cx = Utils.randInt(padding, this.mapW-padding);
+                cy = Utils.randInt(padding, this.mapH-padding);
+            }
+            
+            if(f === this.myFactionId) {
+                this.camera.x = cx * this.cellSize - this.width/2;
+                this.camera.y = cy * this.cellSize - this.height/2;
+            }
+
+            for(let y = cy-2; y <= cy+2; y++) {
+                for(let x = cx-2; x <= cx+2; x++) {
+                    this.setOwner(x, y, f);
+                }
+            }
+            this.placeTower(cx, cy, 0, f, true);
+        }
+    },
+
+    resize() {
+        this.width = window.innerWidth;
+        this.height = window.innerHeight;
+        this.canvas.width = this.width;
+        this.canvas.height = this.height;
+    },
+
+    setupInputs() {
+        const handleStart = (e) => {
+            if(e.target !== this.canvas) return;
+            const pt = this.getEventPos(e);
+            this.isDragging = true;
+            this.lastMouse = pt;
+            
+            // Check click IMMEDIATELY on mousedown for better responsiveness
+            // But dragging logic requires distinguishing click vs drag.
+            // Let's keep handleClick on Start if not dragging
+            this.isMoved = false;
+            
+            // For instant response, you might want to act on mouse down, but standard is mouse up.
+            // We'll stick to logic: MouseDown -> prepare. MouseUp -> if !moved -> Click.
+        };
+
+        const handleMove = (e) => {
+            const pt = this.getEventPos(e);
+            
+            // Fix: Mouse position was relative to screen, screenToWorld needs to account for center offset
+            const worldPos = this.screenToWorld(pt.x, pt.y);
+            this.hoverCell.x = Math.floor(worldPos.x / this.cellSize);
+            this.hoverCell.y = Math.floor(worldPos.y / this.cellSize);
+
+            if(this.isDragging) {
+                const dx = pt.x - this.lastMouse.x;
+                const dy = pt.y - this.lastMouse.y;
+                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) this.isMoved = true;
+                
+                this.camera.x -= dx / this.camera.zoom;
+                this.camera.y -= dy / this.camera.zoom;
+                this.lastMouse = pt;
+            }
+        };
+
+        const handleEnd = (e) => {
+            if (!this.isMoved && this.isDragging) {
+                 // It was a click
+                 const pt = this.lastMouse; // Use last known pos
+                 this.handleClick(pt.x, pt.y);
+            }
+            this.isDragging = false;
+        };
+
+        this.canvas.addEventListener('mousedown', handleStart);
+        window.addEventListener('mousemove', handleMove);
+        window.addEventListener('mouseup', handleEnd);
+        
+        // Touch support
+        this.canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleStart(e); }, {passive: false});
+        window.addEventListener('touchmove', (e) => { e.preventDefault(); handleMove(e); }, {passive: false});
+        window.addEventListener('touchend', (e) => { handleEnd(e); });
+
+        this.canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomSpeed = 0.1;
+            const newZoom = this.camera.zoom * (e.deltaY > 0 ? (1-zoomSpeed) : (1+zoomSpeed));
+            if(newZoom > 0.1 && newZoom < 5) {
+                this.camera.zoom = newZoom;
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if(e.key === '1') this.selectTower(0);
+            if(e.key === '2') this.selectTower(1);
+            if(e.key === '3') this.selectTower(2);
+            if(e.key === 'Escape') {
+                this.selectTower(-1);
+                this.closeContextMenu();
+            }
+        });
+    },
+
+    getEventPos(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        let clientX, clientY;
+        if(e.touches && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+        } else if (e.changedTouches && e.changedTouches.length > 0) {
+            // For touchend
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+        return { 
+            x: clientX - rect.left, 
+            y: clientY - rect.top 
+        };
+    },
+
+    screenToWorld(sx, sy) {
+        // Correct Coordinate Mapping:
+        // Screen Space -> Translate(-W/2, -H/2) -> Scale(1/Zoom) -> Translate(CamX, CamY) -> World Space
+        const centeredX = sx - this.width / 2;
+        const centeredY = sy - this.height / 2;
+        return {
+            x: (centeredX / this.camera.zoom) + this.camera.x,
+            y: (centeredY / this.camera.zoom) + this.camera.y
+        };
+    },
+
+    // --- Game Logic Loop ---
+    loop(now) {
+        const dt = (now - this.lastTime) / 1000;
+        this.lastTime = now;
+
+        if(!this.gameOver) {
+            this.update(dt);
+        }
+        this.draw();
+        
+        requestAnimationFrame(t => this.loop(t));
+    },
+
+    update(dt) {
+        if (this.useAI && Math.random() < 0.05) { 
+            this.runAI();
+        }
+
+        // Update Towers
+        for(let i = this.towers.length - 1; i >= 0; i--) {
+            const t = this.towers[i];
+            t.update(dt);
+            if(t.dead) this.towers.splice(i, 1);
+        }
+
+        // Update Projectiles
+        for(let i = this.projectiles.length - 1; i >= 0; i--) {
+            const p = this.projectiles[i];
+            p.update(dt);
+            if(p.dead) this.projectiles.splice(i, 1);
+        }
+
+        // Update Particles
+        for(let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.life -= dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            if(p.life <= 0) this.particles.splice(i, 1);
+        }
+    },
+
+    runAI() {
+        for(let f=2; f<=this.factionCount; f++) {
+            const fac = this.factions[f];
+            if(fac.money >= 100) {
+                const myTowers = this.towers.filter(t => t.faction === f);
+                if (myTowers.length > 0) {
+                    const base = myTowers[Utils.randInt(0, myTowers.length-1)];
+                    const dir = Utils.rand(0, Math.PI*2);
+                    const dist = Utils.rand(5, 15);
+                    const tx = Math.floor(base.gx + Math.cos(dir)*dist);
+                    const ty = Math.floor(base.gy + Math.sin(dir)*dist);
+
+                    if(this.isValid(tx, ty) && this.getOwner(tx, ty) === f) {
+                        let type = 0;
+                        if(fac.money > 600) type = 2;
+                        else if(fac.money > 300) type = 1;
+                        this.placeTower(tx, ty, type, f);
+                    }
+                }
+            }
+        }
+    },
+
+    economyTick() {
+        if(this.gameOver) return;
+        for(let i=1; i<=this.factionCount; i++) {
+            const income = 5 + Math.floor(this.factions[i].score / 10); 
+            this.factions[i].money += income;
+        }
+        this.updateHUD();
+        this.checkWinCondition();
+    },
+
+    checkWinCondition() {
+        const totalCells = this.mapW * this.mapH;
+        for(let i=1; i<=this.factionCount; i++) {
+            if(this.factions[i].score >= totalCells * 0.99) { 
+                this.endGame(i);
+            }
+        }
+    },
+
+    endGame(winnerId) {
+        this.gameOver = true;
+        const screen = document.getElementById('end-screen');
+        const txt = document.getElementById('winner-text');
+        screen.style.display = 'flex';
+        txt.innerText = this.factions[winnerId].name + " 胜利!";
+        txt.style.color = this.factions[winnerId].color;
+    },
+
+    // --- Grid & Entity Management ---
+    isValid(x, y) {
+        return x >= 0 && x < this.mapW && y >= 0 && y < this.mapH;
+    },
+
+    getOwner(x, y) {
+        if(!this.isValid(x, y)) return -1;
+        return this.grid[y * this.mapW + x];
+    },
+
+    getTowerAt(gx, gy) {
+        return this.towers.find(t => t.gx === gx && t.gy === gy);
+    },
+
+    setOwner(x, y, factionId) {
+        if(!this.isValid(x, y)) return;
+        const idx = y * this.mapW + x;
+        const oldOwner = this.grid[idx];
+        
+        if(oldOwner !== factionId) {
+            if(oldOwner > 0) this.factions[oldOwner].score--;
+            if(factionId > 0) this.factions[factionId].score++;
+            this.grid[idx] = factionId;
+        }
+    },
+
+    // --- Interactions ---
+    selectTower(typeId) {
+        this.selectedTowerType = typeId;
+        document.querySelectorAll('.tower-card').forEach(el => el.classList.remove('selected'));
+        if(typeId !== -1) {
+            document.getElementById('card-'+typeId).classList.add('selected');
+            this.closeContextMenu();
+        }
+    },
+
+    handleClick(sx, sy) {
+        const world = this.screenToWorld(sx, sy);
+        const gx = Math.floor(world.x / this.cellSize);
+        const gy = Math.floor(world.y / this.cellSize);
+
+        if(!this.isValid(gx, gy)) return;
+
+        if(this.selectedTowerType !== -1) {
+            this.tryPlaceTowerPlayer(gx, gy);
+            return;
+        }
+
+        const clickedTower = this.getTowerAt(gx, gy);
+        if(clickedTower && clickedTower.faction === this.myFactionId) {
+            this.openContextMenu(clickedTower, sx, sy);
+        } else {
+            this.closeContextMenu();
+        }
+    },
+
+    tryPlaceTowerPlayer(gx, gy) {
+        const myFac = this.factions[this.myFactionId];
+        const cost = TOWER_TYPES[this.selectedTowerType].cost;
+
+        if(this.getOwner(gx, gy) !== this.myFactionId) {
+            this.showToast("只能在己方领土上建造！");
+            return;
+        }
+
+        const existing = this.getTowerAt(gx, gy);
+        if(existing) {
+            this.showToast("这里已经有建筑了！");
+            return;
+        }
+
+        if(myFac.money < cost) {
+            this.showToast("资金不足！");
+            return;
+        }
+
+        myFac.money -= cost;
+        this.placeTower(gx, gy, this.selectedTowerType, this.myFactionId);
+        this.updateHUD();
+    },
+
+    placeTower(gx, gy, type, faction, free=false) {
+        let tower;
+        if(type === 0) tower = new Turret(gx, gy, faction);
+        else if(type === 1) tower = new LaserTower(gx, gy, faction);
+        else if(type === 2) tower = new Artillery(gx, gy, faction);
+        
+        this.towers.push(tower);
+        
+        // Spawn Effect
+        for(let i=0; i<10; i++) {
+            this.particles.push({
+                x: (gx+0.5)*this.cellSize, y: (gy+0.5)*this.cellSize,
+                vx: Utils.rand(-50, 50), vy: Utils.rand(-50, 50),
+                life: 0.5, color: '#fff', size: 2
+            });
+        }
+    },
+
+    // --- UI Helpers ---
+    updateHUD() {
+        const myFac = this.factions[this.myFactionId];
+        document.getElementById('money-display').innerText = Math.floor(myFac.money);
+        document.getElementById('income-display').innerText = Math.floor(5 + myFac.score/10);
+
+        let html = '';
+        const sorted = [...this.factions].sort((a,b) => b.score - a.score);
+        sorted.forEach(f => {
+            if(f.id === 0) return;
+            html += `<div class="faction-stat" style="${f.id === this.myFactionId ? 'font-weight:bold; color:#fff' : 'color:#aaa'}">
+                <span><span class="color-dot" style="background:${f.color}"></span>${f.name}</span>
+                <span>${f.score}</span>
+            </div>`;
+        });
+        document.getElementById('score-list').innerHTML = html;
+    },
+
+    showToast(msg) {
+        const area = document.getElementById('notification-area');
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.innerText = msg;
+        area.appendChild(el);
+        setTimeout(() => el.remove(), 2100);
+    },
+
+    openContextMenu(tower, sx, sy) {
+        this.selectedTowerInstance = tower;
+        const menu = document.getElementById('context-menu');
+        const typeData = TOWER_TYPES[tower.type];
+        
+        document.getElementById('ctx-title').innerText = typeData.name;
+        document.getElementById('ctx-stats').innerText = `等级: ${tower.level} | 攻击力: ${Math.floor(tower.damage)}`;
+        document.getElementById('ctx-hp').innerText = `生命值: ${Math.floor(tower.hp)} / ${Math.floor(tower.maxHp)}`;
+        
+        const btn = document.getElementById('btn-upgrade');
+        btn.innerText = `升级 ($${typeData.upgradeCost * tower.level})`;
+        
+        let x = sx + 20;
+        let y = sy;
+        if(x + 200 > this.width) x -= 220;
+        
+        menu.style.left = x + 'px';
+        menu.style.top = y + 'px';
+        menu.style.display = 'block';
+    },
+
+    closeContextMenu() {
+        document.getElementById('context-menu').style.display = 'none';
+        this.selectedTowerInstance = null;
+    },
+
+    upgradeSelectedTower() {
+        if(!this.selectedTowerInstance) return;
+        const t = this.selectedTowerInstance;
+        const typeData = TOWER_TYPES[t.type];
+        const cost = typeData.upgradeCost * t.level;
+        const myFac = this.factions[this.myFactionId];
+
+        if(myFac.money >= cost) {
+            myFac.money -= cost;
+            t.level++;
+            t.damage *= 1.2; 
+            t.maxHp *= 1.2;
+            t.hp = t.maxHp; // Heal on upgrade
+            t.range *= 1.1;
+            t.cooldownMax *= 0.9;
+            this.showToast("升级成功！HP已回满");
+            this.closeContextMenu();
+            this.updateHUD();
+        } else {
+            this.showToast("资金不足！");
+        }
+    },
+
+    sellSelectedTower() {
+        if(!this.selectedTowerInstance) return;
+        const t = this.selectedTowerInstance;
+        const typeData = TOWER_TYPES[t.type];
+        
+        this.factions[this.myFactionId].money += typeData.cost * 0.5;
+        t.dead = true; // Mark for removal
+        
+        this.closeContextMenu();
+        this.updateHUD();
+    },
+
+    // --- Rendering ---
+    draw() {
+        this.ctx.fillStyle = '#111';
+        this.ctx.fillRect(0, 0, this.width, this.height);
+
+        this.ctx.save();
+        
+        // Correct Draw Transformation:
+        // Translate Center -> Scale -> Translate Camera (Opposite)
+        this.ctx.translate(this.width/2, this.height/2);
+        this.ctx.scale(this.camera.zoom, this.camera.zoom);
+        this.ctx.translate(-this.camera.x, -this.camera.y);
+
+        const viewX = this.camera.x - (this.width/2)/this.camera.zoom;
+        const viewY = this.camera.y - (this.height/2)/this.camera.zoom;
+        const viewW = this.width / this.camera.zoom;
+        const viewH = this.height / this.camera.zoom;
+
+        const startX = Math.max(0, Math.floor(viewX / this.cellSize));
+        const startY = Math.max(0, Math.floor(viewY / this.cellSize));
+        const endX = Math.min(this.mapW, Math.ceil((viewX + viewW) / this.cellSize));
+        const endY = Math.min(this.mapH, Math.ceil((viewY + viewH) / this.cellSize));
+
+        // Draw Owned Cells
+        for(let y = startY; y < endY; y++) {
+            for(let x = startX; x < endX; x++) {
+                const owner = this.grid[y * this.mapW + x];
+                if(owner !== 0) {
+                    this.ctx.fillStyle = COLORS[owner].hex;
+                    this.ctx.fillRect(x * this.cellSize, y * this.cellSize, this.cellSize, this.cellSize);
+                } else {
+                    this.ctx.fillStyle = '#1a1a1a';
+                }
+            }
+        }
+
+        // Grid Lines
+        if(this.camera.zoom > 0.5) {
+            this.ctx.strokeStyle = '#222';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            for(let x = startX; x <= endX; x++) {
+                this.ctx.moveTo(x * this.cellSize, startY * this.cellSize);
+                this.ctx.lineTo(x * this.cellSize, endY * this.cellSize);
+            }
+            for(let y = startY; y <= endY; y++) {
+                this.ctx.moveTo(startX * this.cellSize, y * this.cellSize);
+                this.ctx.lineTo(endX * this.cellSize, y * this.cellSize);
+            }
+            this.ctx.stroke();
+        }
+
+        // Entities
+        for(let t of this.towers) {
+            if(t.gx < startX-2 || t.gx > endX+2 || t.gy < startY-2 || t.gy > endY+2) continue;
+            t.draw(this.ctx, this.cellSize);
+        }
+
+        this.ctx.globalCompositeOperation = 'lighter';
+        for(let p of this.projectiles) {
+            p.draw(this.ctx);
+        }
+        
+        this.ctx.globalCompositeOperation = 'source-over';
+        for(let p of this.particles) {
+            this.ctx.fillStyle = p.color;
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+            this.ctx.fill();
+        }
+
+        // Preview
+        if(this.selectedTowerType !== -1 && this.hoverCell.x !== -1) {
+            const hx = this.hoverCell.x * this.cellSize;
+            const hy = this.hoverCell.y * this.cellSize;
+            const range = TOWER_TYPES[this.selectedTowerType].range * this.cellSize;
+
+            this.ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            this.ctx.lineWidth = 1;
+            this.ctx.beginPath();
+            this.ctx.arc(hx + this.cellSize/2, hy + this.cellSize/2, range, 0, Math.PI*2);
+            this.ctx.stroke();
+
+            this.ctx.fillStyle = this.getOwner(this.hoverCell.x, this.hoverCell.y) === this.myFactionId ? 'rgba(100,255,100,0.5)' : 'rgba(255,100,100,0.5)';
+            this.ctx.fillRect(hx, hy, this.cellSize, this.cellSize);
+        }
+
+        this.ctx.restore();
+    }
+};
+
+/**
+ * Entity Classes
+ */
+class BaseTower {
+    constructor(gx, gy, faction) {
+        this.gx = gx;
+        this.gy = gy;
+        this.faction = faction;
+        this.level = 1;
+        this.type = 0;
+        this.dead = false;
+        
+        // Stats
+        const stats = TOWER_TYPES[0]; // Default fallback
+        this.range = stats.range;
+        this.cooldown = 0;
+        this.cooldownMax = 1;
+        this.damage = stats.baseDmg;
+        this.hp = stats.baseHp;
+        this.maxHp = stats.baseHp;
+    }
+    
+    get cx() { return (this.gx + 0.5) * Game.cellSize; }
+    get cy() { return (this.gy + 0.5) * Game.cellSize; }
+
+    update(dt) {
+        if(this.cooldown > 0) this.cooldown -= dt;
+    }
+    
+    takeDamage(amount) {
+        this.hp -= amount;
+        if(this.hp <= 0) {
+            this.hp = 0;
+            this.dead = true;
+            // Explosion
+            for(let i=0; i<10; i++) {
+                Game.particles.push({
+                    x: this.cx, y: this.cy,
+                    vx: Utils.rand(-50,50), vy: Utils.rand(-50,50),
+                    life: 0.5, color: '#f80', size: 3
+                });
+            }
+        }
+    }
+
+    draw(ctx, cs) {
+        const x = this.gx * cs;
+        const y = this.gy * cs;
+        // Base
+        ctx.fillStyle = '#333';
+        ctx.fillRect(x+2, y+2, cs-4, cs-4);
+        // Faction Color Ring
+        ctx.strokeStyle = COLORS[this.faction].hex;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x+3, y+3, cs-6, cs-6);
+        
+        // HP Bar
+        const hpPct = this.hp / this.maxHp;
+        if(hpPct < 1.0) {
+            ctx.fillStyle = '#f00';
+            ctx.fillRect(x+2, y-4, cs-4, 3);
+            ctx.fillStyle = '#0f0';
+            ctx.fillRect(x+2, y-4, (cs-4)*hpPct, 3);
+        }
+    }
+}
+
+class Turret extends BaseTower {
+    constructor(gx, gy, faction) {
+        super(gx, gy, faction);
+        this.type = 0;
+        const stats = TOWER_TYPES[0];
+        this.range = stats.range;
+        this.cooldownMax = stats.reload / 60; 
+        this.damage = stats.baseDmg;
+        this.hp = stats.baseHp;
+        this.maxHp = stats.baseHp;
+        
+        this.angle = 0;
+        this.baseAngle = 0;
+        this.targetCheckTimer = Math.random() * 2;
+    }
+
+    update(dt) {
+        super.update(dt);
+        
+        this.targetCheckTimer -= dt;
+        if(this.targetCheckTimer <= 0) {
+            this.findTarget();
+            this.targetCheckTimer = 0.5;
+        }
+
+        const swing = Math.sin(Game.lastTime / 300) * 0.5; 
+        this.angle = this.baseAngle + swing;
+
+        if(this.cooldown <= 0) {
+            this.shoot();
+            this.cooldown = this.cooldownMax / 3; 
+        }
+    }
+
+    findTarget() {
+        const r = this.range;
+        const cx = this.gx;
+        const cy = this.gy;
+        let closestDist = Infinity;
+        let targetX = -1, targetY = -1;
+        
+        // Scan for enemies (Cells or Towers)
+        // Priority: Enemy Towers
+        // Simplified: Just scan grid for enemy color
+        for(let dy = -r; dy <= r; dy++) {
+            for(let dx = -r; dx <= r; dx++) {
+                if(dx*dx + dy*dy > r*r) continue;
+                
+                const tx = cx + dx;
+                const ty = cy + dy;
+                
+                if(Game.isValid(tx, ty)) {
+                    const owner = Game.getOwner(tx, ty);
+                    if(owner !== -1 && owner !== this.faction) {
+                        const dist = dx*dx + dy*dy;
+                        if(dist < closestDist) {
+                            closestDist = dist;
+                            targetX = tx;
+                            targetY = ty;
+                        }
+                    }
+                }
+            }
+        }
+
+        if(targetX !== -1) {
+            this.baseAngle = Math.atan2(targetY - cy, targetX - cx) + Math.PI/2;
+        }
+    }
+
+    shoot() {
+        const speed = 200;
+        const vx = Math.cos(this.angle - Math.PI/2) * speed;
+        const vy = Math.sin(this.angle - Math.PI/2) * speed;
+        Game.projectiles.push(new Bullet(this.cx, this.cy, vx, vy, this.faction, this.damage));
+    }
+
+    draw(ctx, cs) {
+        super.draw(ctx, cs);
+        const x = this.cx;
+        const y = this.cy;
+        
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(this.angle);
+        ctx.fillStyle = '#888';
+        ctx.beginPath();
+        ctx.arc(0, 0, cs*0.3, 0, Math.PI*2);
+        ctx.fill();
+        ctx.fillStyle = '#666';
+        ctx.fillRect(-cs*0.1, -cs*0.5, cs*0.2, cs*0.6);
+        ctx.restore();
+    }
+}
+
+class LaserTower extends BaseTower {
+    constructor(gx, gy, faction) {
+        super(gx, gy, faction);
+        this.type = 1;
+        const stats = TOWER_TYPES[1];
+        this.range = stats.range;
+        this.cooldownMax = stats.reload / 60;
+        this.damage = stats.baseDmg;
+        this.hp = stats.baseHp;
+        this.maxHp = stats.baseHp;
+        this.direction = 0; 
+    }
+
+    update(dt) {
+        super.update(dt);
+        if(this.cooldown <= 0) {
+            this.fire();
+            this.cooldown = this.cooldownMax;
+            this.direction = (this.direction + 1) % 2; 
+        }
+    }
+
+    fire() {
+        const rangePx = this.range * Game.cellSize;
+        let sx = 0, sy = 0;
+        if(this.direction === 0) { sy = 1; }
+        else { sx = 1; } 
+
+        Game.particles.push({
+            type: 'beam',
+            x: this.cx, y: this.cy,
+            ex: this.cx + sx * rangePx * (Math.random() > 0.5 ? 1 : -1), 
+            ey: this.cy + sy * rangePx, // Beam visual is simplified
+            life: 0.3, color: COLORS[this.faction].hex, size: 4
+        });
+        
+        // Damage Logic
+        const r = Math.floor(this.range);
+        for(let i = -r; i <= r; i++) {
+            let tx = this.gx + (this.direction === 1 ? i : 0);
+            let ty = this.gy + (this.direction === 0 ? i : 0);
+            
+            if(Game.isValid(tx, ty)) {
+                // Check for Tower
+                const tower = Game.getTowerAt(tx, ty);
+                if(tower && tower.faction !== this.faction) {
+                    tower.takeDamage(this.damage);
+                    Game.particles.push({
+                         x: (tx+0.5)*Game.cellSize, y: (ty+0.5)*Game.cellSize,
+                         vx: 0, vy: -10, life: 0.5, color: '#f00', size: 2
+                    });
+                } else if (!tower && Game.getOwner(tx, ty) !== this.faction) {
+                    // Only capture if no tower
+                    Game.setOwner(tx, ty, this.faction);
+                    Game.particles.push({
+                        x: (tx+0.5)*Game.cellSize, y: (ty+0.5)*Game.cellSize,
+                        vx: Utils.rand(-20,20), vy: Utils.rand(-20,20),
+                        life: 0.2, color: '#fff', size: 1
+                    });
+                }
+            }
+        }
+    }
+
+    draw(ctx, cs) {
+        super.draw(ctx, cs);
+        const x = this.cx;
+        const y = this.cy;
+        
+        ctx.fillStyle = this.direction === 0 ? '#f44' : '#44f';
+        if(this.direction === 0) ctx.fillRect(x - 2, y - cs/2 + 2, 4, cs-4);
+        else ctx.fillRect(x - cs/2 + 2, y - 2, cs-4, 4);
+        
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+class Artillery extends BaseTower {
+    constructor(gx, gy, faction) {
+        super(gx, gy, faction);
+        this.type = 2;
+        const stats = TOWER_TYPES[2];
+        this.range = stats.range;
+        this.cooldownMax = stats.reload / 60;
+        this.damage = stats.baseDmg;
+        this.hp = stats.baseHp;
+        this.maxHp = stats.baseHp;
+    }
+
+    update(dt) {
+        super.update(dt);
+        if(this.cooldown <= 0) {
+            this.fire();
+            this.cooldown = this.cooldownMax;
+        }
+    }
+
+    fire() {
+        let tx = 0, ty = 0;
+        let found = false;
+        
+        for(let i=0; i<10; i++) {
+            const dist = Utils.rand(5, this.range);
+            const ang = Utils.rand(0, Math.PI*2);
+            tx = Math.floor(this.gx + Math.cos(ang) * dist);
+            ty = Math.floor(this.gy + Math.sin(ang) * dist);
+            
+            if(Game.isValid(tx, ty) && Game.getOwner(tx, ty) !== this.faction) {
+                found = true;
+                break;
+            }
+        }
+
+        if(found) {
+            const targetX = (tx + 0.5) * Game.cellSize;
+            const targetY = (ty + 0.5) * Game.cellSize;
+            Game.projectiles.push(new Shell(this.cx, this.cy, targetX, targetY, this.faction, this.damage));
+        }
+    }
+
+    draw(ctx, cs) {
+        super.draw(ctx, cs);
+        ctx.fillStyle = '#444';
+        ctx.fillRect(this.cx-cs*0.4, this.cy-cs*0.4, cs*0.8, cs*0.8);
+        ctx.fillStyle = '#000';
+        ctx.beginPath();
+        ctx.arc(this.cx, this.cy, cs*0.2, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+/**
+ * Projectiles
+ */
+class Bullet {
+    constructor(x, y, vx, vy, faction, damage) {
+        this.x = x; this.y = y;
+        this.vx = vx; this.vy = vy;
+        this.faction = faction;
+        this.damage = damage;
+        this.dead = false;
+        this.life = 2.0; 
+    }
+
+    update(dt) {
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+        this.life -= dt;
+        
+        if(this.life <= 0) this.dead = true;
+
+        const gx = Math.floor(this.x / Game.cellSize);
+        const gy = Math.floor(this.y / Game.cellSize);
+
+        if(Game.isValid(gx, gy)) {
+            const owner = Game.getOwner(gx, gy);
+            if(owner !== this.faction) {
+                // Check Tower Hit First
+                const tower = Game.getTowerAt(gx, gy);
+                if(tower) {
+                    if(tower.faction !== this.faction) {
+                        tower.takeDamage(this.damage);
+                        this.dead = true;
+                    }
+                } else {
+                    // No tower, hit land
+                    Game.setOwner(gx, gy, this.faction);
+                    this.dead = true;
+                }
+
+                if(this.dead) {
+                    Game.particles.push({
+                        x: this.x, y: this.y,
+                        vx: -this.vx*0.2, vy: -this.vy*0.2,
+                        life: 0.1, color: COLORS[this.faction].hex, size: 2
+                    });
+                }
+            }
+        } else {
+            this.dead = true;
+        }
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = COLORS[this.faction].hex;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 2, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+class Shell {
+    constructor(x, y, tx, ty, faction, damage) {
+        this.x = x; this.y = y;
+        this.tx = tx; this.ty = ty;
+        this.faction = faction;
+        this.damage = damage;
+        this.dead = false;
+        
+        const dist = Utils.distance(x, y, tx, ty);
+        const speed = 150;
+        this.totalTime = dist / speed;
+        this.currentTime = 0;
+        
+        this.startX = x; this.startY = y;
+    }
+
+    update(dt) {
+        this.currentTime += dt;
+        const t = this.currentTime / this.totalTime;
+        
+        if(t >= 1) {
+            this.explode();
+            this.dead = true;
+            return;
+        }
+
+        this.x = this.startX + (this.tx - this.startX) * t;
+        this.y = this.startY + (this.ty - this.startY) * t;
+        this.z = Math.sin(t * Math.PI) * 50; 
+    }
+
+    explode() {
+        const gx = Math.floor(this.tx / Game.cellSize);
+        const gy = Math.floor(this.ty / Game.cellSize);
+        
+        for(let dy=-1; dy<=1; dy++) {
+            for(let dx=-1; dx<=1; dx++) {
+                const tx = gx + dx;
+                const ty = gy + dy;
+                if(Game.isValid(tx, ty)) {
+                    if(Game.getOwner(tx, ty) !== this.faction) {
+                        const tower = Game.getTowerAt(tx, ty);
+                        if(tower && tower.faction !== this.faction) {
+                            tower.takeDamage(this.damage * (dx===0&&dy===0 ? 1 : 0.5)); // Splash dmg
+                        } else if (!tower) {
+                            Game.setOwner(tx, ty, this.faction);
+                        }
+                    }
+                }
+            }
+        }
+        
+        for(let i=0; i<15; i++) {
+            Game.particles.push({
+                x: this.tx, y: this.ty,
+                vx: Utils.rand(-60,60), vy: Utils.rand(-60,60),
+                life: 0.6, color: 'orange', size: Utils.rand(2,5)
+            });
+        }
+    }
+
+    draw(ctx) {
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, 3, 0, Math.PI*2);
+        ctx.fill();
+
+        const visualY = this.y - (this.z || 0);
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(this.x, visualY, 4, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+</script>
+</body>
+</html>
